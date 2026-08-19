@@ -13,7 +13,7 @@ CipherSpace v1 should use a simple local-first, version-based sync protocol. It 
 
 ## Implementation Status
 
-The database foundation includes a `sync_changes` sequence table for future workspace change feeds. No sync request schemas, endpoints, cursors, idempotency processing, conflict detection, or client behavior in this document are implemented yet.
+The database foundation includes a `sync_changes` sequence table for future workspace change feeds. The direct note API now stores immutable encrypted versions, server-assigned version numbers, current-version pointers, parent-version pointers, and optional client revision metadata. Direct appends always parent to the current server version; they do not implement the base-version check described below. No sync request schemas, endpoints, cursors, idempotency processing, conflict detection, or client behavior in this document are implemented yet.
 
 ## Non-Goals For v1
 

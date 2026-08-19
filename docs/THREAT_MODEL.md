@@ -4,9 +4,9 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 ## Current Implementation Boundary
 
-The backend now provides email/password account registration, database-backed sessions, and workspace membership authorization. Passwords are hashed with Argon2id. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata and membership, while only owners can add, remove, or change members. The final owner is protected with serialized database transactions.
+The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, and encrypted-note/version storage APIs. Passwords are hashed with Argon2id. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata, membership, encrypted notes, and encrypted version history. Owners and editors can create notes and append versions, while only owners can soft-delete notes. The final owner is protected with serialized database transactions.
 
-Authorization for future notes and sync, encryption, key generation, key sharing, and sync behavior remain unimplemented. PostgreSQL columns reserve space for future encrypted note envelopes, but the API does not yet accept or process note data. The remaining security goals below describe the intended product, not current guarantees.
+Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. They cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Encryption, key generation, key sharing, and sync behavior remain unimplemented. The remaining cryptographic security goals below describe the intended product, not current guarantees.
 
 ## Security Goals
 
@@ -107,9 +107,9 @@ Current membership flow:
 
 Roles for v1:
 
-- Owner: read workspace metadata and membership and manage members; future note editing is planned.
-- Editor: read workspace metadata and membership; future note editing is planned.
-- Viewer: read workspace metadata and membership; future note access is planned without editing.
+- Owner: read workspace metadata, membership, encrypted notes, and version history; manage members; create, append, and soft-delete notes.
+- Editor: read workspace metadata, membership, encrypted notes, and version history; create and append note versions.
+- Viewer: read workspace metadata, membership, encrypted notes, and version history without mutating notes.
 
 Comment-only and enterprise-style roles are deferred.
 
@@ -144,6 +144,7 @@ Unauthorized workspace access:
 Database compromise:
 
 - Mitigate by storing note content only as encrypted envelopes.
+- Current limitation: the backend treats submitted envelope fields as opaque and does not verify that clients performed authenticated encryption correctly.
 - Residual risk: metadata remains visible.
 
 Network interception:

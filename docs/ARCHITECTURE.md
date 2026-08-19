@@ -96,14 +96,14 @@ Initial API areas:
 - `GET /api/workspaces/:workspaceId/members` (implemented)
 - `PATCH /api/workspaces/:workspaceId/members/:userId` (implemented)
 - `DELETE /api/workspaces/:workspaceId/members/:userId` (implemented)
+- `POST /api/workspaces/:workspaceId/notes` (implemented)
+- `GET /api/workspaces/:workspaceId/notes` (implemented)
+- `GET /api/workspaces/:workspaceId/notes/:noteId` (implemented)
+- `POST /api/workspaces/:workspaceId/notes/:noteId/versions` (implemented)
+- `GET /api/workspaces/:workspaceId/notes/:noteId/versions` (implemented)
+- `DELETE /api/workspaces/:workspaceId/notes/:noteId` (implemented as a soft delete)
 - `POST /workspaces/:workspaceId/invitations`
 - `POST /invitations/:invitationId/accept`
-- `GET /workspaces/:workspaceId/notes`
-- `POST /workspaces/:workspaceId/notes`
-- `GET /notes/:noteId`
-- `PATCH /notes/:noteId`
-- `DELETE /notes/:noteId`
-- `GET /notes/:noteId/versions`
 - `POST /sync/push`
 - `POST /sync/pull`
 - `POST /conflicts/:conflictId/resolve`
@@ -143,8 +143,8 @@ Planned tables:
 - `workspaces`: id, creator_user_id, name, created_at, updated_at.
 - `workspace_members`: workspace_id, user_id, role (`owner`, `editor`, or `viewer`), wrapped_workspace_key, key_wrap_algorithm, added_at.
 - `workspace_invitations`: id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at.
-- `notes`: id, workspace_id, creator_user_id, encrypted_title, current_version_id, deleted_at, created_at, updated_at.
-- `note_versions`: id, note_id, version_number, parent_version_id, author_user_id, device_id, encrypted_payload, payload_nonce, payload_key_id, created_at.
+- `encrypted_notes`: id, workspace_id, creator_user_id, encrypted_title, current_version_id, deleted_at, created_at, updated_at.
+- `note_versions`: id, note_id, version_number, parent_version_id, author_user_id, device_id, encrypted_payload, payload_nonce, payload_key_id, client_version, created_at.
 - `sync_operations`: id, workspace_id, note_id, author_user_id, device_id, operation_type, base_version_id, resulting_version_id, idempotency_key, created_at.
 - `sync_events`: id, workspace_id, sequence_number, event_type, entity_id, created_at.
 - `sync_cursors`: workspace_id, device_id, last_sequence_number, updated_at.
@@ -182,3 +182,5 @@ Sensitive local storage rules:
 - Prefer explicit APIs and schemas over implicit transport conventions.
 - Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.
 - Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.
+- Store optional note titles as ciphertext/nonce pairs. The direct note API accepts opaque base64 envelopes and does not perform cryptography or plaintext processing.
+- Create an immutable initial version with each note, assign later versions monotonically increasing per-note numbers under a row lock, and set their parent to the version current at append time. Base-version conflict checks remain deferred to the sync protocol.

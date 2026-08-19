@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable backend, PostgreSQL foundation, user authentication, and workspace membership management. Encrypted-note and local-first sync features remain in the planning phase.
+CipherSpace now has a runnable backend, PostgreSQL foundation, user authentication, workspace membership management, and encrypted-note/version APIs. Client-side encryption and local-first sync remain in the planning phase.
 
 ## Current Status
 
@@ -22,6 +22,13 @@ CipherSpace now has a runnable backend, PostgreSQL foundation, user authenticati
 - The workspace migration renames the legacy single-owner column to `creator_user_id` and converts legacy `member` roles to `editor`; active ownership is represented by membership roles.
 - Request validation rejects malformed emails, weak/oversized passwords, and extra credential fields. Login failures use the same response whether the email is unknown or the password is wrong.
 - Vitest covers health responses; authentication behavior; workspace creation and user-scoped listing; member and non-member access; owner-managed membership; role validation; non-owner denial; and final-owner protection.
+- Authenticated workspace owners and editors can create encrypted notes with an initial immutable version and append later encrypted versions. Viewers have read-only note access.
+- Note lists expose server-visible metadata and optional encrypted title envelopes but omit content versions. Note detail returns metadata and the latest encrypted version, while a separate endpoint returns ordered version history.
+- Every appended version receives a monotonically increasing server version number and records the previously current version as `parentVersionId`. Optional `clientVersion` metadata is retained for future client/sync work.
+- Owners can soft-delete notes. Deleted notes and version rows remain in PostgreSQL but are excluded from normal list, detail, append, and history endpoints.
+- Note authorization is checked against current workspace membership. Non-members receive workspace-not-found responses, viewers cannot mutate notes, and only owners can delete notes.
+- The backend validates UUIDs, strict request shapes, base64 encoding, envelope metadata, and decoded ciphertext/nonce size limits without decrypting or interpreting note data.
+- Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 
 The backend stack decision is now established as TypeScript, Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. This keeps the implementation backend-only and uses the session model selected in the architecture documentation.
@@ -90,7 +97,7 @@ The backend portion of this stack is installed; frontend and client-side choices
 5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
 7. Implement workspace creation and member invitation APIs. Workspace creation and immediate membership of existing users are complete; pending invitations and email delivery remain deferred.
-8. Implement encrypted note CRUD APIs without sync batching.
+8. Implement encrypted note CRUD APIs without sync batching. Complete for create, list, detail/latest version, append version, version history, and soft deletion.
 9. Implement local-first note editor flow that persists locally before network sync.
 10. Implement sync operation queue, push/pull endpoints, idempotency, and retry behavior.
 11. Add version-based conflict detection and manual resolution UI.
@@ -104,13 +111,15 @@ The backend portion of this stack is installed; frontend and client-side choices
 - Only the backend foundation is runnable; no frontend exists.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
-- Authorization is implemented for workspace and membership endpoints only. Future note, version, and sync endpoints must apply the same membership boundary.
-- No note, version, or sync APIs exist yet.
-- Encryption and key-sharing logic are not implemented; byte columns only reserve storage for future client-encrypted envelopes.
+- Authorization is implemented for workspace, membership, note, and note-version endpoints. Future sync endpoints must apply the same membership boundary.
+- No sync APIs exist yet.
+- Encryption and key-sharing logic are not implemented. Note endpoints accept opaque encrypted envelopes produced elsewhere and cannot verify that callers encrypted meaningful plaintext correctly.
+- Direct version appends always parent the new version to the current server version. They do not accept a base version, detect conflicts, provide idempotency, or resolve concurrent edits; those behaviors remain part of the future sync protocol.
+- Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - `sync_changes` is persistence groundwork only; there are no sync endpoints, device cursors, idempotency handling, or conflict records yet.
 - Pending invitations, email delivery, comments, conflicts, and key shares are planned but intentionally have no tables or behavior in this slice. Adding a member currently requires an existing account and takes effect immediately.
 - Local-first client storage is not implemented.
-- Route tests use in-memory auth and workspace repositories; database migration execution is verified through the local PostgreSQL setup rather than an automated integration test.
+- Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
 - Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 
