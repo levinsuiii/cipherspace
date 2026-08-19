@@ -1,10 +1,17 @@
 # Project State
 
-CipherSpace now has a runnable backend, PostgreSQL foundation, user authentication, workspace membership management, and encrypted-note/version APIs. Client-side encryption and local-first sync remain in the planning phase.
+CipherSpace now has a runnable React frontend foundation, Fastify backend, PostgreSQL persistence, user authentication, workspace membership management, and encrypted-note/version APIs. Client-side encryption and local-first sync remain in the planning phase.
 
 ## Current Status
 
 - `apps/api` contains a TypeScript/Node.js Fastify service.
+- `apps/web` contains a React and TypeScript Vite application using React Router and TanStack Query.
+- The frontend includes login and registration pages, HTTP-only cookie session bootstrap/logout, protected routing, a responsive authenticated layout, and basic navigation.
+- Authenticated users can list and create workspaces, open workspace details, and view the backend-supported member directory with role labels.
+- Workspace note pages list active encrypted-note metadata, show explicit loading/error/empty states, and provide a detail shell for the latest opaque version envelope.
+- Owners and editors can create a note through a development-only form that maps to the existing encrypted-note API. The form uses opaque base64 placeholders and performs no encryption or plaintext processing; viewers receive a read-only state.
+- The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
+- Frontend tests verify cookie credential handling, structured error propagation, and live auth-state cleanup on logout.
 - `GET /health` checks PostgreSQL connectivity and returns `200` when the database is reachable or `503` when it is unavailable.
 - PostgreSQL access uses a small `pg` connection-pool adapter.
 - An ordered SQL migration runner records migration filenames and checksums in `schema_migrations`.
@@ -31,7 +38,7 @@ CipherSpace now has a runnable backend, PostgreSQL foundation, user authenticati
 - Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 
-The backend stack decision is now established as TypeScript, Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. This keeps the implementation backend-only and uses the session model selected in the architecture documentation.
+The established stack is React, TypeScript, Vite, React Router, and TanStack Query for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest for the backend. This frontend slice is intentionally online-only and uses the session model selected in the architecture documentation.
 
 ## MVP Scope
 
@@ -76,21 +83,21 @@ Deferred until after notes, encryption, and sync are stable:
 
 ## Recommended Tech Stack
 
-The backend portion of this stack is installed; frontend and client-side choices remain recommendations:
+The backend and initial frontend portions of this stack are installed; local-first and client-crypto choices remain recommendations:
 
-- Frontend: TypeScript, React, Vite, React Router, TanStack Query.
+- Frontend: TypeScript, React, Vite, React Router, TanStack Query (implemented foundation).
 - Local storage: IndexedDB through Dexie.
 - Backend: TypeScript, Node.js, Fastify (implemented).
 - Database: PostgreSQL (implemented).
 - Validation: Zod at API and sync boundaries.
 - Authentication: password auth with Argon2id password hashing and secure HTTP-only sessions (implemented).
 - Crypto: Web Crypto API in the browser, using AES-GCM for authenticated encryption and platform secure randomness.
-- Testing: Vitest for backend tests (implemented); Playwright for core browser flows once a UI exists.
+- Testing: Vitest for backend and frontend unit tests (implemented); Playwright remains recommended for core browser flows.
 - Formatting/linting: not established yet; add Prettier and ESLint when the broader TypeScript workspace is introduced.
 
 ## Roadmap As Independent Codex Tasks
 
-1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Backend scaffold and test commands are complete; frontend, shared package, linting, and formatting remain.
+1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Frontend and backend workspaces and tests are complete; a shared package, linting, and formatting remain.
 2. Define shared domain types and validation schemas for users, workspaces, members, notes, versions, sync operations, and conflicts.
 3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references.
 4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats.
@@ -108,7 +115,9 @@ The backend portion of this stack is installed; frontend and client-side choices
 
 ## Known Limitations
 
-- Only the backend foundation is runnable; no frontend exists.
+- The frontend currently requires a reachable API and has no offline or local-first behavior.
+- The development note form does not encrypt its inputs. It only exercises the opaque backend envelope contract and must not be used for sensitive plaintext.
+- The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
 - Authorization is implemented for workspace, membership, note, and note-version endpoints. Future sync endpoints must apply the same membership boundary.

@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, and server-side storage for encrypted notes and immutable note versions.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend foundation, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, and server-side storage for encrypted notes and immutable note versions.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ CipherSpace is a local-first encrypted collaboration workspace. The current impl
 - npm 10 or newer
 - Docker with Docker Compose
 
-## Run the API and PostgreSQL with Docker
+## Run the full stack with Docker
 
 From a fresh clone:
 
@@ -19,13 +19,15 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 docker compose up --build
 ```
 
-The API is available at `http://localhost:3000`. Verify it with:
+Open the frontend at `http://localhost:8080`. The API is also available directly at `http://localhost:3000`. Verify the proxied API with:
 
 ```powershell
-Invoke-RestMethod http://localhost:3000/health
+Invoke-RestMethod http://localhost:8080/health
 ```
 
-The API container waits for PostgreSQL, runs pending migrations, and then starts the server. Stop the services with `docker compose down`. To also remove local database data, run `docker compose down --volumes`.
+The API container waits for PostgreSQL, runs pending migrations, and then starts the server. The Nginx web container serves the frontend and proxies `/api` requests to the API so cookie sessions remain same-origin. `WEB_PORT` can override the default frontend port of `8080`.
+
+Stop the services with `docker compose down`. To also remove local database data, run `docker compose down --volumes`.
 
 ## Run the API locally
 
@@ -40,6 +42,48 @@ npm run dev
 ```
 
 The development server watches for TypeScript changes. Use `npm run build` followed by `npm start` to run the compiled server.
+
+## Run the frontend locally
+
+Install dependencies once at the repository root, then run PostgreSQL, the API, and the frontend in separate terminals:
+
+```powershell
+# Terminal 1
+docker compose up -d postgres
+
+# Terminal 2
+npm run db:migrate
+npm run dev:api
+
+# Terminal 3
+npm run dev:web
+```
+
+Open `http://localhost:5173`. Vite proxies `/api` and `/health` to `http://localhost:3000`; this is required for the HTTP-only cookie session to remain same-origin without enabling backend CORS.
+
+Frontend workspace commands:
+
+```powershell
+npm run dev:web
+npm run test:web
+npm run typecheck --workspace @cipherspace/web
+npm run build --workspace @cipherspace/web
+npm run preview --workspace @cipherspace/web
+```
+
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, note listing, an opaque note-detail shell, and development-only note creation fields matching the existing encrypted-note API.
+
+The note form does **not** encrypt content. Its prefilled values are harmless base64 placeholders used only to exercise the API contract. Do not enter plaintext secrets or sensitive note content until client-side encryption is implemented.
+
+## Manual frontend check
+
+1. Start the local stack and open the frontend.
+2. Register with an email and a password containing 12–128 characters. Registration should open the empty workspace page.
+3. Create a workspace and confirm its overview shows the current account as an owner.
+4. Open **Notes** and confirm the empty state appears.
+5. Submit the prefilled development note form. The new note-detail shell should show version 1 and the same opaque payload metadata.
+6. Return to the note list and workspace list, then sign out. Protected routes should redirect to sign-in.
+7. Sign back in and confirm the workspace and note remain available.
 
 ## Authentication
 
@@ -192,7 +236,9 @@ npm run build
 docker compose config
 ```
 
+The root `test`, `typecheck`, and `build` commands verify both npm workspaces. Backend-only and frontend-only tests can be run with `npm run test:api` and `npm run test:web`.
+
 ## Current scope
 
-Only the backend foundation, user authentication, workspaces, membership roles, and encrypted-note/version APIs are implemented. Actual client-side encryption, sync, local client storage, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The first online-only frontend foundation, backend foundation, user authentication, workspaces, membership roles, and encrypted-note/version APIs are implemented. Actual client-side encryption, sync, local client storage, offline mode, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

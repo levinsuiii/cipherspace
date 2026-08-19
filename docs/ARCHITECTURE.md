@@ -131,6 +131,14 @@ Initial pages:
 
 Defer comments UI until notes and sync are stable.
 
+## Implemented Frontend Foundation
+
+`apps/web` is a React and TypeScript Vite application. React Router owns public authentication routes and protected workspace/note routes. TanStack Query owns remote API state and cache invalidation; no server data is persisted locally yet. A small typed fetch client sends credentials with every request so the backend's HTTP-only cookie session remains the authentication boundary.
+
+Local development uses Vite's same-origin `/api` proxy. The Docker web container serves the built single-page application through Nginx and proxies `/api` to the API service. This avoids adding cross-origin credential handling to the backend for the initial frontend slice.
+
+The note creation form exposes the backend envelope fields as development-only opaque inputs. It performs no encryption, key generation, plaintext processing, offline persistence, sync, or conflict handling.
+
 ## Database Schema Plan
 
 The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`. The `encrypted_notes` name makes the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.

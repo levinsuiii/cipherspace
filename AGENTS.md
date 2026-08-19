@@ -60,17 +60,16 @@ The backend uses Node.js 22+, TypeScript, Fastify, and PostgreSQL.
 
 ## Frontend Commands
 
-No frontend stack or commands are established yet.
+The frontend uses React, TypeScript, Vite, React Router, and TanStack Query.
 
-When a frontend is added, document the exact commands here, including:
+- Install all dependencies: `npm install`
+- Run the frontend locally: `npm run dev:web`
+- Run frontend tests: `npm run test:web`
+- Run frontend type checks: `npm run typecheck --workspace @cipherspace/web`
+- Build the frontend: `npm run build --workspace @cipherspace/web`
+- Preview the frontend build: `npm run preview --workspace @cipherspace/web`
 
-- install dependencies
-- run the frontend locally
-- run frontend tests
-- run frontend type checks
-- run frontend build
-
-Do not invent frontend commands before the frontend exists.
+The Vite development and preview servers proxy `/api` and `/health` to the backend at `http://localhost:3000` so browser cookie sessions remain same-origin.
 
 ## Test Commands
 

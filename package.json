@@ -6,12 +6,16 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @cipherspace/api",
+    "build": "npm run build --workspaces --if-present",
     "dev": "npm run dev --workspace @cipherspace/api",
+    "dev:api": "npm run dev --workspace @cipherspace/api",
+    "dev:web": "npm run dev --workspace @cipherspace/web",
     "start": "npm run start --workspace @cipherspace/api",
-    "test": "npm run test --workspace @cipherspace/api",
+    "test": "npm run test --workspaces --if-present",
+    "test:api": "npm run test --workspace @cipherspace/api",
+    "test:web": "npm run test --workspace @cipherspace/web",
     "test:watch": "npm run test:watch --workspace @cipherspace/api",
-    "typecheck": "npm run typecheck --workspace @cipherspace/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "db:migrate": "npm run db:migrate --workspace @cipherspace/api"
   },
   "engines": {
