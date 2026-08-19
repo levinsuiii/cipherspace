@@ -1,0 +1,20 @@
+{
+  "name": "cipherspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @cipherspace/api",
+    "dev": "npm run dev --workspace @cipherspace/api",
+    "start": "npm run start --workspace @cipherspace/api",
+    "test": "npm run test --workspace @cipherspace/api",
+    "test:watch": "npm run test:watch --workspace @cipherspace/api",
+    "typecheck": "npm run typecheck --workspace @cipherspace/api",
+    "db:migrate": "npm run db:migrate --workspace @cipherspace/api"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

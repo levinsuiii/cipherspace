@@ -48,17 +48,15 @@ Expected future layout may include backend, frontend, shared packages, tests, da
 
 ## Backend Commands
 
-No backend stack or commands are established yet.
+The backend uses Node.js 22+, TypeScript, Fastify, and PostgreSQL.
 
-When a backend is added, document the exact commands here, including:
-
-- install dependencies
-- run the backend locally
-- run backend tests
-- run backend type checks
-- run backend database migrations, if applicable
-
-Do not invent backend commands before the backend exists.
+- Install dependencies: `npm install`
+- Run the backend locally: `npm run dev`
+- Build the backend: `npm run build`
+- Run the compiled backend: `npm start`
+- Run backend tests: `npm test`
+- Run backend type checks: `npm run typecheck`
+- Run backend database migrations: `npm run db:migrate`
 
 ## Frontend Commands
 
@@ -76,9 +74,12 @@ Do not invent frontend commands before the frontend exists.
 
 ## Test Commands
 
-No test runner is established yet.
+Vitest is the backend test runner.
 
-When tests are added, document the exact commands here. Tests should cover important logic, especially:
+- Run tests once: `npm test`
+- Run tests in watch mode: `npm run test:watch`
+
+Tests should cover important logic, especially:
 
 - encryption and decryption integration with established libraries
 - input validation
@@ -93,17 +94,12 @@ If a task changes behavior and tests cannot be added yet because the stack is no
 
 ## Docker Compose Commands
 
-No Docker Compose setup exists yet.
-
-When Docker Compose is added, document the exact commands here, including:
-
-- start local services
-- stop local services
-- reset local development data
-- view logs
-- run migrations or setup tasks in containers, if applicable
-
-Do not create Docker files unless explicitly requested.
+- Start backend and PostgreSQL: `docker compose up --build`
+- Start PostgreSQL only: `docker compose up -d postgres`
+- Stop local services: `docker compose down`
+- Reset local development data: `docker compose down --volumes`
+- View logs: `docker compose logs -f`
+- Run migrations in a running API container: `docker compose exec api node dist/database/migrate.js`
 
 ## Crypto And Security Rules
 
@@ -180,4 +176,3 @@ Before finishing a change, review:
 - Tests: Are important paths covered?
 - Docs: Are behavior, setup, sync, or threat model docs updated if needed?
 - Fresh clone: Can a new contributor run the project with documented steps once runnable code exists?
-
