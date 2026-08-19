@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a TypeScript/Fastify API, PostgreSQL persistence and migrations, and basic email/password authentication with database-backed sessions.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, and workspace membership management.
 
 ## Prerequisites
 
@@ -69,6 +69,64 @@ curl.exe -i -b cookies.txt -c cookies.txt -X POST http://localhost:3000/api/auth
 
 Registration returns `201`, login and the current-user endpoint return `200`, and logout returns `204`. User responses contain only `id`, normalized `email`, and `createdAt`; password hashes and session tokens are never included in JSON responses.
 
+## Workspace API
+
+All workspace endpoints require the `cipherspace_session` cookie. A workspace creator becomes its first `owner`. Members have one of three roles:
+
+- `owner`: read the workspace and manage members.
+- `editor`: read the workspace but cannot manage members. Note editing is not implemented yet.
+- `viewer`: read the workspace but cannot manage members.
+
+Workspace names, member email addresses, and roles are server-visible metadata. Adding by email or user ID immediately adds an existing CipherSpace account; pending invitations and email delivery are not implemented.
+
+The following PowerShell-compatible examples assume an authenticated owner cookie in `owner-cookies.txt` and an authenticated member cookie in `member-cookies.txt`:
+
+```powershell
+# Create a workspace
+curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
+  --data '{"name":"Product planning"}' `
+  http://localhost:3000/api/workspaces
+
+# Copy the id from the response for the remaining examples
+$workspaceId = "00000000-0000-4000-8000-000000000000"
+
+# List only workspaces belonging to the authenticated user
+curl.exe -i -b owner-cookies.txt http://localhost:3000/api/workspaces
+
+# Add an existing account as an editor (userId may be used instead of email)
+curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
+  --data '{"email":"member@example.com","role":"editor"}' `
+  "http://localhost:3000/api/workspaces/$workspaceId/members"
+
+# Read workspace details using the new member's session
+curl.exe -i -b member-cookies.txt "http://localhost:3000/api/workspaces/$workspaceId"
+
+# List members (available to every workspace member)
+curl.exe -i -b member-cookies.txt "http://localhost:3000/api/workspaces/$workspaceId/members"
+
+# Change a member's role as an owner
+$memberUserId = "00000000-0000-4000-8000-000000000000"
+curl.exe -i -b owner-cookies.txt -X PATCH -H "Content-Type: application/json" `
+  --data '{"role":"viewer"}' `
+  "http://localhost:3000/api/workspaces/$workspaceId/members/$memberUserId"
+
+# Remove a member as an owner
+curl.exe -i -b owner-cookies.txt -X DELETE `
+  "http://localhost:3000/api/workspaces/$workspaceId/members/$memberUserId"
+```
+
+Supported workspace endpoints are:
+
+- `POST /api/workspaces`
+- `GET /api/workspaces`
+- `GET /api/workspaces/:id`
+- `POST /api/workspaces/:id/members`
+- `GET /api/workspaces/:id/members`
+- `PATCH /api/workspaces/:id/members/:userId`
+- `DELETE /api/workspaces/:id/members/:userId`
+
+Non-members receive `404` for workspace-scoped reads so the API does not disclose whether a workspace ID exists. Editors and viewers receive `403` when attempting member management. The final owner cannot be removed or changed to another role.
+
 ## Database migrations
 
 Migrations are ordered SQL files in `apps/api/migrations`. Apply pending migrations with:
@@ -90,5 +148,5 @@ docker compose config
 
 ## Current scope
 
-Only the backend foundation and basic user authentication are implemented. API endpoints for workspaces or notes, encryption, sync endpoints, local client storage, comments, invitations, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+Only the backend foundation, user authentication, workspaces, and membership roles are implemented. APIs for notes, encryption, sync, local client storage, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

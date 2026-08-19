@@ -52,7 +52,7 @@ Core entities:
 - User: account identity used for authentication and membership.
 - Device: client installation that creates local operations and participates in sync.
 - Workspace: collaboration boundary containing notes and members.
-- WorkspaceMember: user role and member-wrapped access material for a workspace.
+- WorkspaceMember: user role and future member-wrapped access material for a workspace.
 - Invitation: pending membership offer by email.
 - Note: stable identity and server-visible metadata for an encrypted document.
 - NoteVersion: immutable encrypted content snapshot or operation record.
@@ -89,9 +89,13 @@ Initial API areas:
 - `POST /api/auth/login` (implemented)
 - `POST /api/auth/logout` (implemented)
 - `GET /api/auth/me` (implemented)
-- `POST /workspaces`
-- `GET /workspaces`
-- `GET /workspaces/:workspaceId`
+- `POST /api/workspaces` (implemented)
+- `GET /api/workspaces` (implemented)
+- `GET /api/workspaces/:workspaceId` (implemented)
+- `POST /api/workspaces/:workspaceId/members` (implemented for existing users)
+- `GET /api/workspaces/:workspaceId/members` (implemented)
+- `PATCH /api/workspaces/:workspaceId/members/:userId` (implemented)
+- `DELETE /api/workspaces/:workspaceId/members/:userId` (implemented)
 - `POST /workspaces/:workspaceId/invitations`
 - `POST /invitations/:invitationId/accept`
 - `GET /workspaces/:workspaceId/notes`
@@ -136,8 +140,8 @@ Planned tables:
 - `users`: id, email, password_hash, created_at, updated_at.
 - `sessions`: id, user_id, token_hash, expires_at, created_at.
 - `devices`: id, user_id, label, created_at, last_seen_at.
-- `workspaces`: id, owner_user_id, name, created_at, updated_at.
-- `workspace_members`: workspace_id, user_id, role, wrapped_workspace_key, key_wrap_algorithm, added_at.
+- `workspaces`: id, creator_user_id, name, created_at, updated_at.
+- `workspace_members`: workspace_id, user_id, role (`owner`, `editor`, or `viewer`), wrapped_workspace_key, key_wrap_algorithm, added_at.
 - `workspace_invitations`: id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at.
 - `notes`: id, workspace_id, creator_user_id, encrypted_title, current_version_id, deleted_at, created_at, updated_at.
 - `note_versions`: id, note_id, version_number, parent_version_id, author_user_id, device_id, encrypted_payload, payload_nonce, payload_key_id, created_at.
@@ -177,3 +181,4 @@ Sensitive local storage rules:
 - Keep comments out of the first implementation slice.
 - Prefer explicit APIs and schemas over implicit transport conventions.
 - Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.
+- Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.

@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable backend, PostgreSQL foundation, and basic user authentication. Collaboration and encrypted-note features remain in the planning phase.
+CipherSpace now has a runnable backend, PostgreSQL foundation, user authentication, and workspace membership management. Encrypted-note and local-first sync features remain in the planning phase.
 
 ## Current Status
 
@@ -15,8 +15,13 @@ CipherSpace now has a runnable backend, PostgreSQL foundation, and basic user au
 - Passwords are stored as Argon2id hashes. Plaintext passwords are neither persisted nor returned.
 - Registration and login create database-backed opaque sessions in HTTP-only, `SameSite=Lax` cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`.
 - `GET /api/auth/me` returns the authenticated user, and `POST /api/auth/logout` invalidates the current session.
+- Authenticated users can create and list their own workspaces through `/api/workspaces`; the creator is atomically added as the first owner.
+- Workspace members can read workspace details and membership lists. Non-members receive a not-found response for workspace-scoped reads.
+- Owners can immediately add existing users by normalized email or user ID, assign `owner`, `editor`, or `viewer`, update roles, and remove members.
+- Editors and viewers cannot manage membership. Transactional workspace locking prevents the final owner from being removed or downgraded, including under concurrent owner-management requests.
+- The workspace migration renames the legacy single-owner column to `creator_user_id` and converts legacy `member` roles to `editor`; active ownership is represented by membership roles.
 - Request validation rejects malformed emails, weak/oversized passwords, and extra credential fields. Login failures use the same response whether the email is unknown or the password is wrong.
-- Vitest covers health responses plus registration, password hashing, login, duplicate email handling, validation, authenticated access, raw-token non-persistence, and logout.
+- Vitest covers health responses; authentication behavior; workspace creation and user-scoped listing; member and non-member access; owner-managed membership; role validation; non-owner denial; and final-owner protection.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 
 The backend stack decision is now established as TypeScript, Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. This keeps the implementation backend-only and uses the session model selected in the architecture documentation.
@@ -37,7 +42,7 @@ Included in v1:
 - Version-based conflict detection.
 - Manual conflict resolution when concurrent edits occur.
 - Basic note version history.
-- Basic workspace role model: owner and member.
+- Basic workspace role model: owner, editor, and viewer.
 - Server-side authorization for workspace, note, and sync access.
 
 Deferred until after notes, encryption, and sync are stable:
@@ -84,7 +89,7 @@ The backend portion of this stack is installed; frontend and client-side choices
 4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats.
 5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
-7. Implement workspace creation and member invitation APIs.
+7. Implement workspace creation and member invitation APIs. Workspace creation and immediate membership of existing users are complete; pending invitations and email delivery remain deferred.
 8. Implement encrypted note CRUD APIs without sync batching.
 9. Implement local-first note editor flow that persists locally before network sync.
 10. Implement sync operation queue, push/pull endpoints, idempotency, and retry behavior.
@@ -99,13 +104,13 @@ The backend portion of this stack is installed; frontend and client-side choices
 - Only the backend foundation is runnable; no frontend exists.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
-- Authorization beyond checking whether a session belongs to a current user is not implemented because workspace-scoped APIs are still deferred.
-- No workspace, note, version, or sync APIs exist yet.
+- Authorization is implemented for workspace and membership endpoints only. Future note, version, and sync endpoints must apply the same membership boundary.
+- No note, version, or sync APIs exist yet.
 - Encryption and key-sharing logic are not implemented; byte columns only reserve storage for future client-encrypted envelopes.
 - `sync_changes` is persistence groundwork only; there are no sync endpoints, device cursors, idempotency handling, or conflict records yet.
-- Comments, conflicts, invitations, and key shares are planned but intentionally have no tables or behavior in this slice.
+- Pending invitations, email delivery, comments, conflicts, and key shares are planned but intentionally have no tables or behavior in this slice. Adding a member currently requires an existing account and takes effect immediately.
 - Local-first client storage is not implemented.
-- Route tests use an in-memory auth repository; database migration execution is verified through the local PostgreSQL setup rather than an automated integration test.
+- Route tests use in-memory auth and workspace repositories; database migration execution is verified through the local PostgreSQL setup rather than an automated integration test.
 - Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

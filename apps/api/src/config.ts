@@ -1,6 +1,9 @@
-import "dotenv/config";
+import { fileURLToPath } from "node:url";
 
+import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
+
+loadDotenv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 const environmentSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),

@@ -66,7 +66,8 @@ class InMemoryAuthRepository implements AuthRepository {
 
 const database: Database = {
   close: vi.fn(async () => undefined),
-  query: vi.fn(async () => ({ rows: [] }) as unknown as QueryResult)
+  query: vi.fn(async () => ({ rows: [] }) as unknown as QueryResult),
+  transaction: vi.fn(async (operation) => operation(database))
 };
 
 const apps: ReturnType<typeof buildApp>[] = [];

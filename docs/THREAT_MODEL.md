@@ -4,9 +4,9 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 ## Current Implementation Boundary
 
-The backend now provides email/password account registration and database-backed sessions. Passwords are hashed with Argon2id. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected.
+The backend now provides email/password account registration, database-backed sessions, and workspace membership authorization. Passwords are hashed with Argon2id. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata and membership, while only owners can add, remove, or change members. The final owner is protected with serialized database transactions.
 
-Workspace authorization, encryption, key generation, key sharing, and sync behavior remain unimplemented. PostgreSQL columns reserve space for future encrypted note envelopes, but the API does not yet accept or process note data. The remaining security goals below describe the intended product, not current guarantees.
+Authorization for future notes and sync, encryption, key generation, key sharing, and sync behavior remain unimplemented. PostgreSQL columns reserve space for future encrypted note envelopes, but the API does not yet accept or process note data. The remaining security goals below describe the intended product, not current guarantees.
 
 ## Security Goals
 
@@ -99,24 +99,19 @@ Key sharing:
 
 ## Multi-User Workspace Sharing Model
 
-Flow:
+Current membership flow:
 
-1. Workspace owner creates a workspace and a random workspace key.
-2. Owner invites a user by email.
-3. Invited user accepts the invitation after authentication and publishes or confirms a wrapping public key.
-4. Owner or an authorized client wraps the workspace key for the invited member.
-5. Backend records membership and stores only the member-specific wrapped workspace key.
+1. An authenticated user creates a workspace and becomes its first owner.
+2. An owner identifies an existing account by email or user ID and assigns a role.
+3. The backend immediately records membership. There is no pending invitation, email delivery, key generation, or key wrapping yet.
 
 Roles for v1:
 
-- Owner: manage workspace, invite members, create and edit notes.
-- Member: create and edit notes.
+- Owner: read workspace metadata and membership and manage members; future note editing is planned.
+- Editor: read workspace metadata and membership; future note editing is planned.
+- Viewer: read workspace metadata and membership; future note access is planned without editing.
 
-Deferred roles:
-
-- Viewer.
-- Comment-only.
-- Admin separate from owner.
+Comment-only and enterprise-style roles are deferred.
 
 Revocation limitation:
 

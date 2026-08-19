@@ -22,10 +22,12 @@ afterEach(async () => {
 });
 
 function databaseWithQuery(query: Database["query"]): Database {
-  return {
+  const database: Database = {
     close: vi.fn(async () => undefined),
-    query
+    query,
+    transaction: vi.fn(async (operation) => operation(database))
   };
+  return database;
 }
 
 describe("GET /health", () => {
