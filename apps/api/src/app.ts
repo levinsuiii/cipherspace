@@ -1,12 +1,17 @@
+import cookie from "@fastify/cookie";
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { PostgresAuthRepository, type AuthRepository } from "./auth/repository.js";
+import { AuthService } from "./auth/service.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { createDatabase, type Database } from "./database/database.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoute } from "./routes/health.js";
 
 export interface BuildAppOptions {
   config?: AppConfig;
   database?: Database;
+  authRepository?: AuthRepository;
   logger?: boolean;
 }
 
@@ -20,8 +25,20 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   const database = options.database ?? createDatabase(config.DATABASE_URL);
   const ownsDatabase = options.database === undefined;
+  const authRepository = options.authRepository ?? new PostgresAuthRepository(database);
+  const authService = new AuthService(
+    authRepository,
+    config.SESSION_SECRET,
+    config.SESSION_TTL_HOURS
+  );
 
+  app.register(cookie);
+  app.decorateRequest("authenticatedUser", null);
   registerHealthRoute(app, database);
+  registerAuthRoutes(app, {
+    authService,
+    secureCookies: config.NODE_ENV === "production"
+  });
 
   if (ownsDatabase) {
     app.addHook("onClose", async () => {

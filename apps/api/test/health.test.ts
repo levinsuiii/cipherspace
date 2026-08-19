@@ -10,7 +10,9 @@ const testConfig: AppConfig = {
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
-  PORT: 3000
+  PORT: 3000,
+  SESSION_SECRET: "test-session-secret-at-least-32-characters",
+  SESSION_TTL_HOURS: 168
 };
 
 const apps: ReturnType<typeof buildApp>[] = [];

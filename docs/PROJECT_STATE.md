@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable backend and PostgreSQL foundation. Product features remain in the planning phase.
+CipherSpace now has a runnable backend, PostgreSQL foundation, and basic user authentication. Collaboration and encrypted-note features remain in the planning phase.
 
 ## Current Status
 
@@ -9,11 +9,17 @@ CipherSpace now has a runnable backend and PostgreSQL foundation. Product featur
 - PostgreSQL access uses a small `pg` connection-pool adapter.
 - An ordered SQL migration runner records migration filenames and checksums in `schema_migrations`.
 - The initial migration prepares `users`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`, with foreign keys, constraints, and lookup indexes.
+- The authentication migration makes `users.password_hash` required and adds expiring `sessions` records with token-digest, user, and expiry indexes.
 - Docker Compose runs the API and PostgreSQL 16, waits for database readiness, and applies migrations before API startup.
-- Vitest covers the healthy and unavailable database responses from `/health`.
+- Users can register and log in with a normalized email and a 12-to-128-character password through `/api/auth/register` and `/api/auth/login`.
+- Passwords are stored as Argon2id hashes. Plaintext passwords are neither persisted nor returned.
+- Registration and login create database-backed opaque sessions in HTTP-only, `SameSite=Lax` cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`.
+- `GET /api/auth/me` returns the authenticated user, and `POST /api/auth/logout` invalidates the current session.
+- Request validation rejects malformed emails, weak/oversized passwords, and extra credential fields. Login failures use the same response whether the email is unknown or the password is wrong.
+- Vitest covers health responses plus registration, password hashing, login, duplicate email handling, validation, authenticated access, raw-token non-persistence, and logout.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 
-The backend stack decision is now established as TypeScript, Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, and Vitest. This follows the previously recommended stack while keeping the first implementation slice backend-only.
+The backend stack decision is now established as TypeScript, Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. This keeps the implementation backend-only and uses the session model selected in the architecture documentation.
 
 ## MVP Scope
 
@@ -65,7 +71,7 @@ The backend portion of this stack is installed; frontend and client-side choices
 - Backend: TypeScript, Node.js, Fastify (implemented).
 - Database: PostgreSQL (implemented).
 - Validation: Zod at API and sync boundaries.
-- Authentication: password auth with Argon2id password hashing and secure HTTP-only sessions.
+- Authentication: password auth with Argon2id password hashing and secure HTTP-only sessions (implemented).
 - Crypto: Web Crypto API in the browser, using AES-GCM for authenticated encryption and platform secure randomness.
 - Testing: Vitest for backend tests (implemented); Playwright for core browser flows once a UI exists.
 - Formatting/linting: not established yet; add Prettier and ESLint when the broader TypeScript workspace is introduced.
@@ -76,7 +82,7 @@ The backend portion of this stack is installed; frontend and client-side choices
 2. Define shared domain types and validation schemas for users, workspaces, members, notes, versions, sync operations, and conflicts.
 3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references.
 4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats.
-5. Add backend authentication and session management with password hashing.
+5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
 7. Implement workspace creation and member invitation APIs.
 8. Implement encrypted note CRUD APIs without sync batching.
@@ -91,13 +97,15 @@ The backend portion of this stack is installed; frontend and client-side choices
 ## Known Limitations
 
 - Only the backend foundation is runnable; no frontend exists.
-- Authentication and authorization are not implemented, and `password_hash` is only a nullable schema placeholder.
+- Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
+- Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
+- Authorization beyond checking whether a session belongs to a current user is not implemented because workspace-scoped APIs are still deferred.
 - No workspace, note, version, or sync APIs exist yet.
 - Encryption and key-sharing logic are not implemented; byte columns only reserve storage for future client-encrypted envelopes.
 - `sync_changes` is persistence groundwork only; there are no sync endpoints, device cursors, idempotency handling, or conflict records yet.
 - Comments, conflicts, invitations, and key shares are planned but intentionally have no tables or behavior in this slice.
 - Local-first client storage is not implemented.
-- Tests currently cover only health-route behavior; database migration execution is verified through the local PostgreSQL setup rather than an automated integration test.
-- Security properties are plans only until implemented and reviewed.
+- Route tests use an in-memory auth repository; database migration execution is verified through the local PostgreSQL setup rather than an automated integration test.
+- Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

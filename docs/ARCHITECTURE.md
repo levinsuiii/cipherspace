@@ -85,10 +85,10 @@ The product must not market v1 as hiding all metadata.
 
 Initial API areas:
 
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /auth/logout`
-- `GET /me`
+- `POST /api/auth/register` (implemented)
+- `POST /api/auth/login` (implemented)
+- `POST /api/auth/logout` (implemented)
+- `GET /api/auth/me` (implemented)
 - `POST /workspaces`
 - `GET /workspaces`
 - `GET /workspaces/:workspaceId`
@@ -129,12 +129,12 @@ Defer comments UI until notes and sync are stable.
 
 ## Database Schema Plan
 
-The backend foundation now implements the first persistence subset as `users`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`. The `encrypted_notes` name makes the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
+The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`. The `encrypted_notes` name makes the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
 
 Planned tables:
 
 - `users`: id, email, password_hash, created_at, updated_at.
-- `sessions`: id, user_id, expires_at, created_at.
+- `sessions`: id, user_id, token_hash, expires_at, created_at.
 - `devices`: id, user_id, label, created_at, last_seen_at.
 - `workspaces`: id, owner_user_id, name, created_at, updated_at.
 - `workspace_members`: workspace_id, user_id, role, wrapped_workspace_key, key_wrap_algorithm, added_at.
@@ -176,3 +176,4 @@ Sensitive local storage rules:
 - Use manual conflict resolution for divergent edits.
 - Keep comments out of the first implementation slice.
 - Prefer explicit APIs and schemas over implicit transport conventions.
+- Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.

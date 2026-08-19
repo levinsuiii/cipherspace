@@ -13,6 +13,8 @@
     "db:migrate": "tsx src/database/migrate.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "argon2": "^0.45.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.0.0",
     "pg": "^8.13.1",

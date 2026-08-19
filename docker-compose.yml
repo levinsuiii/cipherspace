@@ -28,6 +28,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
       PORT: 3000
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
     ports:
       - "${PORT:-3000}:3000"
 

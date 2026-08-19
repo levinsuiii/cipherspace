@@ -4,7 +4,9 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 ## Current Implementation Boundary
 
-The backend foundation provides PostgreSQL columns intended for encrypted note envelopes and key-wrapping metadata, but it does not yet accept or process note data. Authentication, authorization, encryption, key generation, key sharing, and sync behavior remain unimplemented. The security goals below describe the intended product, not guarantees provided by the current health-only API.
+The backend now provides email/password account registration and database-backed sessions. Passwords are hashed with Argon2id. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected.
+
+Workspace authorization, encryption, key generation, key sharing, and sync behavior remain unimplemented. PostgreSQL columns reserve space for future encrypted note envelopes, but the API does not yet accept or process note data. The remaining security goals below describe the intended product, not current guarantees.
 
 ## Security Goals
 
@@ -77,7 +79,16 @@ Password handling:
 
 - Store only Argon2id password hashes on the backend.
 - Do not store plaintext passwords or password-equivalent secrets.
+- Accept passwords from 12 through 128 characters and normalize account emails to lowercase.
+- Return the same login error for unknown emails and incorrect passwords; perform an Argon2 verification in both cases to reduce account-enumeration timing differences.
 - If password-derived wrapping is used for private keys, use a reviewed password-based KDF with strong parameters and document recovery limitations.
+
+Session handling:
+
+- Generate opaque tokens with platform secure randomness and store only HMAC-SHA-256 token digests keyed by an environment-provided secret.
+- Send session tokens only through HTTP-only, `SameSite=Lax` cookies and add `Secure` in production.
+- Reject expired sessions and delete the current session record on logout.
+- Never log credentials, raw session tokens, or the session secret.
 
 Key sharing:
 
@@ -144,6 +155,16 @@ Network interception:
 
 - Mitigate with HTTPS in deployed environments.
 - Residual risk: local development may use HTTP.
+
+Account attacks:
+
+- Mitigate password disclosure with Argon2id hashing and generic login failures.
+- Residual risk: email verification, password reset, login rate limiting, breached-password checks, multi-factor authentication, and administrator session revocation are not implemented.
+
+Session and request forgery:
+
+- Mitigate session database disclosure by storing only keyed token digests and limit passive cookie access with HTTP-only, `SameSite=Lax`, and production `Secure` attributes.
+- Residual risk: there is no explicit CSRF token mechanism, session rotation after privilege changes, device/session management, or automatic cleanup job for expired rows.
 
 Malicious or compromised server:
 

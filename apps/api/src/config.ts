@@ -9,7 +9,9 @@ const environmentSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().min(1).max(65_535).default(3000)
+  PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters"),
+  SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7)
 });
 
 export type AppConfig = z.infer<typeof environmentSchema>;
