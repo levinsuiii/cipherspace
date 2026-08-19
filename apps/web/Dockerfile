@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY packages/crypto/package.json packages/crypto/package.json
 RUN npm ci
 
 COPY apps/web/tsconfig.json apps/web/tsconfig.json

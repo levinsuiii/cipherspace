@@ -6,7 +6,9 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, and encrypted-note/version storage APIs. The browser frontend uses those APIs through a same-origin proxy and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata, membership, encrypted notes, and encrypted version history. Owners and editors can create notes and append versions, while only owners can soft-delete notes. The final owner is protected with serialized database transactions.
 
-Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The initial frontend exposes these fields as an explicitly labeled development form and does not encrypt its input. Placeholder values must never be treated as protecting plaintext or used for sensitive content. The API cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Encryption, key generation, key sharing, and sync behavior remain unimplemented. The remaining cryptographic security goals below describe the intended product, not current guarantees.
+Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package now generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note content with 128-bit authentication tags, and validates versioned envelopes. Fixed envelope metadata is authenticated as additional data. Wrong keys, tampered ciphertext, and malformed payloads fail without returning plaintext.
+
+The frontend is not connected to these primitives yet. Its explicitly labeled development form still submits opaque placeholders and must not be used for plaintext or sensitive content. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, local-first storage, and sync remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Current cryptographic guarantees therefore apply only when callers use the crypto package correctly; they do not yet describe an end-to-end product flow.
 
 ## Security Goals
 
@@ -64,16 +66,25 @@ Metadata assets with limited confidentiality in v1:
 
 ## Encryption Model
 
-Recommended v1 model:
+Implemented primitive model:
 
-- Generate a random workspace content key when a workspace is created.
-- Encrypt note content with AES-GCM using Web Crypto API.
-- Use a fresh random nonce for every encryption operation.
-- Store ciphertext, nonce, algorithm identifier, and key identifier in an encrypted envelope.
+- Generate a random, extractable 256-bit AES-GCM workspace content key with Web Crypto.
+- Encrypt UTF-8 note content with AES-GCM and a 128-bit authentication tag.
+- Use a fresh random 96-bit nonce from `crypto.getRandomValues()` for every encryption operation.
+- Store canonical-base64 ciphertext and nonce with algorithm, envelope version, and workspace key version.
+- Authenticate fixed envelope metadata as AES-GCM additional authenticated data.
+- Strictly validate envelope fields, versions, base64 encodings, nonce length, and ciphertext size before decryption.
+
+Not yet implemented around those primitives:
+
+- Create and retain the workspace key as part of the workspace creation flow.
+- Map the package envelope to the existing note API in the frontend.
 - Give each user or device a key-wrapping public key using reviewed Web Crypto algorithms.
 - Wrap the workspace key separately for each member using that member's wrapping key.
 - Store each member's wrapped workspace key in `workspace_members`.
 - Unwrap workspace keys only on authorized clients after sign-in or unlock.
+
+The package exposes raw workspace-key import and export only as a building block for future wrapping. Raw exported keys provide full decryption capability and must not be stored or transmitted unwrapped.
 
 Password handling:
 
@@ -144,7 +155,7 @@ Unauthorized workspace access:
 Database compromise:
 
 - Mitigate by storing note content only as encrypted envelopes.
-- Current limitation: the backend treats submitted envelope fields as opaque and does not verify that clients performed authenticated encryption correctly.
+- The client package provides authenticated encryption, but the current frontend does not use it and the backend treats submitted envelope fields as opaque. The backend cannot verify that clients performed authenticated encryption correctly.
 - Residual risk: metadata remains visible.
 
 Network interception:
@@ -196,6 +207,11 @@ Conflict overwrite:
 - v1 does not protect against malicious browser extensions, compromised devices, or a malicious deployed frontend bundle.
 - v1 does not provide searchable encrypted note bodies on the server.
 - v1 does not include formal cryptographic review.
+- The implemented package does not prevent nonce reuse by callers that bypass `encryptNoteContent()` and invoke Web Crypto directly with the same workspace key.
+- Workspace keys are extractable to enable future wrapping. An XSS payload, malicious browser extension, compromised device, or malicious frontend bundle running in the unlocked client context can access plaintext and key material.
+- There is no implemented secure storage, lock timeout, member key sharing, recovery, key rotation, or cryptographic revocation flow.
+- Passphrase-based derivation is intentionally absent until unlock and recovery semantics are designed; account passwords do not currently unlock encrypted workspace keys.
+- Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
 
 ## Documentation Requirements For Future Changes
 

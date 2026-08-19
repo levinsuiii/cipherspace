@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable React frontend foundation, Fastify backend, PostgreSQL persistence, user authentication, workspace membership management, and encrypted-note/version APIs. Client-side encryption and local-first sync remain in the planning phase.
+CipherSpace now has a runnable React frontend foundation, Fastify backend, PostgreSQL persistence, user authentication, workspace membership management, encrypted-note/version APIs, and an isolated client-side crypto package. Frontend encryption integration, key sharing, local persistence, and local-first sync remain in the planning phase.
 
 ## Current Status
 
@@ -37,6 +37,11 @@ CipherSpace now has a runnable React frontend foundation, Fastify backend, Postg
 - The backend validates UUIDs, strict request shapes, base64 encoding, envelope metadata, and decoded ciphertext/nonce size limits without decrypting or interpreting note data.
 - Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
+- `packages/crypto` contains browser-compatible TypeScript wrappers around the platform Web Crypto API and has no runtime dependencies.
+- The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces, encrypts and decrypts UTF-8 note content with 128-bit authentication tags, and serializes strict version 1 envelopes as canonical base64.
+- Fixed envelope metadata is authenticated as AES-GCM additional data. Runtime validation rejects missing or extra fields, unsupported algorithms or versions, malformed base64, incorrect nonce lengths, oversized ciphertext, tampering, and wrong keys without returning plaintext.
+- Raw 32-byte workspace keys can be exported and imported to support a future wrapping flow. Secure key persistence, member wrapping and sharing, recovery, rotation, and revocation are explicitly not implemented.
+- Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, wrong-key and ciphertext-authentication failures, and malformed payloads.
 
 The established stack is React, TypeScript, Vite, React Router, and TanStack Query for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest for the backend. This frontend slice is intentionally online-only and uses the session model selected in the architecture documentation.
 
@@ -91,16 +96,16 @@ The backend and initial frontend portions of this stack are installed; local-fir
 - Database: PostgreSQL (implemented).
 - Validation: Zod at API and sync boundaries.
 - Authentication: password auth with Argon2id password hashing and secure HTTP-only sessions (implemented).
-- Crypto: Web Crypto API in the browser, using AES-GCM for authenticated encryption and platform secure randomness.
+- Crypto: Web Crypto API using AES-256-GCM for authenticated encryption and platform secure randomness (primitive package implemented; application integration and key sharing remain).
 - Testing: Vitest for backend and frontend unit tests (implemented); Playwright remains recommended for core browser flows.
 - Formatting/linting: not established yet; add Prettier and ESLint when the broader TypeScript workspace is introduced.
 
 ## Roadmap As Independent Codex Tasks
 
-1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Frontend and backend workspaces and tests are complete; a shared package, linting, and formatting remain.
+1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Frontend, backend, and crypto workspaces and tests are complete; a shared package, linting, and formatting remain.
 2. Define shared domain types and validation schemas for users, workspaces, members, notes, versions, sync operations, and conflicts.
 3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references.
-4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats.
+4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats. Complete as the isolated `@cipherspace/crypto` package; frontend and key-sharing integration remain separate tasks.
 5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
 7. Implement workspace creation and member invitation APIs. Workspace creation and immediate membership of existing users are complete; pending invitations and email delivery remain deferred.
@@ -122,7 +127,8 @@ The backend and initial frontend portions of this stack are installed; local-fir
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
 - Authorization is implemented for workspace, membership, note, and note-version endpoints. Future sync endpoints must apply the same membership boundary.
 - No sync APIs exist yet.
-- Encryption and key-sharing logic are not implemented. Note endpoints accept opaque encrypted envelopes produced elsewhere and cannot verify that callers encrypted meaningful plaintext correctly.
+- Client encryption primitives are implemented but are not connected to the frontend note flow. The development form still submits opaque placeholders, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
+- Workspace key creation during workspace setup, secure key persistence, key wrapping and member sharing, passphrase-based unlock, recovery, rotation, revocation, and cryptographic deletion are not implemented. Raw key exports must not be persisted or transmitted unwrapped.
 - Direct version appends always parent the new version to the current server version. They do not accept a base version, detect conflicts, provide idempotency, or resolve concurrent edits; those behaviors remain part of the future sync protocol.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - `sync_changes` is persistence groundwork only; there are no sync endpoints, device cursors, idempotency handling, or conflict records yet.

@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend foundation, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, and server-side storage for encrypted notes and immutable note versions.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend foundation, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, server-side storage for encrypted notes and immutable note versions, and an isolated client-side crypto package.
 
 ## Prerequisites
 
@@ -173,7 +173,7 @@ Non-members receive `404` for workspace-scoped reads so the API does not disclos
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. Clients are responsible for producing authenticated encrypted envelopes; the client crypto package and key-sharing flow are not implemented yet.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package now provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption, but it is not connected to the frontend form yet. Key persistence, wrapping, and sharing are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -236,9 +236,9 @@ npm run build
 docker compose config
 ```
 
-The root `test`, `typecheck`, and `build` commands verify both npm workspaces. Backend-only and frontend-only tests can be run with `npm run test:api` and `npm run test:web`.
+The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Backend-only and frontend-only tests can be run with `npm run test:api` and `npm run test:web`. Crypto-only verification uses `npm run test --workspace @cipherspace/crypto`.
 
 ## Current scope
 
-The first online-only frontend foundation, backend foundation, user authentication, workspaces, membership roles, and encrypted-note/version APIs are implemented. Actual client-side encryption, sync, local client storage, offline mode, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The first online-only frontend foundation, backend foundation, user authentication, workspaces, membership roles, encrypted-note/version APIs, and isolated client encryption primitives are implemented. Frontend encryption integration, sync, local client storage, offline mode, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

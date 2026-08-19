@@ -35,14 +35,16 @@ apps/
   web/
   api/
 packages/
+  crypto/
   shared/
 docs/
 ```
 
 Suggested ownership:
 
-- `apps/web`: UI, IndexedDB persistence, client crypto, sync queue.
+- `apps/web`: UI, IndexedDB persistence, crypto-package integration, and sync queue.
 - `apps/api`: authentication, authorization, sync endpoints, database access.
+- `packages/crypto`: isolated Web Crypto wrappers, workspace-key serialization, and encrypted note envelope validation.
 - `packages/shared`: IDs, typed data models, Zod schemas, error codes, sync payload contracts.
 
 ## Data Model
@@ -139,6 +141,24 @@ Local development uses Vite's same-origin `/api` proxy. The Docker web container
 
 The note creation form exposes the backend envelope fields as development-only opaque inputs. It performs no encryption, key generation, plaintext processing, offline persistence, sync, or conflict handling.
 
+## Implemented Client Crypto Package
+
+`packages/crypto` is a browser-compatible TypeScript package built directly on the platform Web Crypto API. It is isolated from backend, transport, persistence, and UI logic and has no runtime dependencies.
+
+The implemented v1 primitives are:
+
+- Generate an extractable 256-bit AES-GCM workspace key with `encrypt` and `decrypt` usages.
+- Generate a fresh 96-bit nonce through `crypto.getRandomValues()` for every note encryption.
+- Encrypt and decrypt UTF-8 note content with AES-256-GCM and a 128-bit authentication tag.
+- Serialize ciphertext and nonces as canonical base64 in a strict envelope containing algorithm, envelope version, and workspace key version.
+- Authenticate the fixed envelope metadata as AES-GCM additional authenticated data.
+- Export and import 32-byte raw workspace keys for a future key-wrapping flow. Raw exports are sensitive and must not be persisted or transmitted without wrapping.
+- Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
+
+The package envelope is intentionally transport-independent. The later frontend integration will map its `ciphertext` and `nonce` fields into the existing API's `encryptedContent` and `contentNonce` fields and provide a key-management identifier for `encryptionMetadata.keyId`; the backend contract is unchanged in this slice.
+
+Passphrase-based derivation is not implemented. The architecture does not yet define password-based unlock, private-key wrapping, recovery, or parameter migration, and authentication passwords must not be reused directly as encryption keys. Define that complete flow before selecting a password KDF.
+
 ## Database Schema Plan
 
 The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`. The `encrypted_notes` name makes the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
@@ -192,3 +212,5 @@ Sensitive local storage rules:
 - Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.
 - Store optional note titles as ciphertext/nonce pairs. The direct note API accepts opaque base64 envelopes and does not perform cryptography or plaintext processing.
 - Create an immutable initial version with each note, assign later versions monotonically increasing per-note numbers under a row lock, and set their parent to the version current at append time. Base-version conflict checks remain deferred to the sync protocol.
+- Use the platform Web Crypto API through the isolated `@cipherspace/crypto` package for AES-256-GCM note encryption. Version 1 envelopes use random 96-bit nonces, 128-bit tags, canonical base64, envelope version 1, and workspace key version 1.
+- Keep raw workspace keys in caller-managed memory. Raw key import/export supports future wrapping but is not a persistence or sharing design.
