@@ -66,6 +66,27 @@ export interface CreateNoteInput {
   encryptionMetadata: EncryptionMetadata;
 }
 
+export interface EncryptedComment {
+  authorId: string;
+  contentNonce: string | null;
+  createdAt: string;
+  deletedAt: string | null;
+  encryptedContent: string | null;
+  encryptionMetadata: EncryptionMetadata | null;
+  id: string;
+  noteId: string;
+  parentCommentId: string | null;
+  updatedAt: string;
+  workspaceId: string;
+}
+
+export interface CreateCommentInput {
+  contentNonce: string;
+  encryptedContent: string;
+  encryptionMetadata: EncryptionMetadata;
+  parentCommentId?: string | null;
+}
+
 export interface Credentials {
   email: string;
   password: string;

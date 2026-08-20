@@ -4,9 +4,11 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 ## Current Implementation Boundary
 
-The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, and encrypted-note/version storage APIs. The browser frontend uses those APIs through a same-origin proxy and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata, membership, encrypted notes, and encrypted version history. Owners and editors can create notes and append versions, while only owners can soft-delete notes. The final owner is protected with serialized database transactions.
+The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, encrypted-note/version storage APIs, and encrypted note-scoped comments. The browser frontend uses those APIs through a same-origin proxy and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata, membership, encrypted notes, encrypted version history, and encrypted comments. Owners and editors can create notes, append versions, and create comments; only owners can soft-delete notes. Editors may delete their own comments, and owners may moderate any comment. The final owner is protected with serialized database transactions.
 
-Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package now generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note content with 128-bit authentication tags, and validates versioned envelopes. Fixed envelope metadata is authenticated as additional data. Wrong keys, tampered ciphertext, and malformed payloads fail without returning plaintext.
+Note and comment routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note and comment content with 128-bit authentication tags, and validates versioned envelopes. Notes and comments use distinct fixed authenticated-data contexts so an envelope from one content class cannot be decrypted as the other. Wrong keys, tampered ciphertext, malformed payloads, and cross-context swaps fail without returning plaintext.
+
+Comments use direct authenticated API calls and are not queued in IndexedDB or included in note sync. A draft exists only in React state until submission. Soft-deleting a comment clears its ciphertext, nonce, and encryption metadata in PostgreSQL while retaining authorship, parent linkage, and timestamps for a safe discussion placeholder. Previously downloaded ciphertext or plaintext cannot be revoked from a member or compromised device.
 
 The sync engine is connected to these primitives: when the local key provider supplies an unlocked workspace `CryptoKey`, it serializes the local title/body snapshot, encrypts it through `@cipherspace/crypto`, persists the encrypted prepared operation, and only then constructs a push request. It never falls back to uploading the plaintext draft. The React UI can invoke this engine manually while unlocked.
 
@@ -50,7 +52,7 @@ Not trusted with plaintext note content:
 Sensitive assets:
 
 - Note plaintext.
-- Future comment plaintext.
+- Comment plaintext.
 - Workspace encryption keys.
 - Per-note or per-version content encryption keys, if introduced.
 - Passwords and password-derived key material.
@@ -64,6 +66,7 @@ Metadata assets with limited confidentiality in v1:
 - Membership graph.
 - Note IDs.
 - Note timestamps.
+- Comment IDs, note/workspace links, authors, parent links, timestamps, deletion state, and ciphertext sizes.
 - Version counts.
 - Ciphertext sizes.
 - Sync timing and device identifiers.
@@ -130,8 +133,10 @@ Current membership flow:
 Roles for v1:
 
 - Owner: read workspace metadata, membership, encrypted notes, and version history; manage members; create, append, and soft-delete notes.
-- Editor: read workspace metadata, membership, encrypted notes, and version history; create and append note versions.
-- Viewer: read workspace metadata, membership, encrypted notes, and version history without mutating notes.
+- Editor: read workspace metadata, membership, encrypted notes, version history, and comments; create and append note versions; create comments; delete their own comments.
+- Viewer: read workspace metadata, membership, encrypted notes, version history, and comments without mutating notes or comments.
+
+Owners can also create comments, delete their own comments, and moderate comments written by other members.
 
 Comment-only and enterprise-style roles are deferred.
 
@@ -147,13 +152,14 @@ The server will see:
 - Account emails.
 - Workspace names and membership.
 - Note existence, note IDs, timestamps, deleted status, version numbers, and encrypted payload sizes.
+- Comment existence, IDs, note/workspace associations, authors, parent relationships, timestamps, deleted status, encrypted payload sizes, and discussion activity.
 - Invitation recipients.
 - IP-level and timing metadata at the infrastructure layer.
 
 The server should not see:
 
 - Note plaintext.
-- Future comment plaintext.
+- Comment plaintext.
 - Raw workspace keys.
 - Passwords.
 
@@ -161,11 +167,12 @@ The server should not see:
 
 Unauthorized workspace access:
 
-- Mitigate with server-side membership checks on every workspace, note, version, and sync endpoint.
+- Mitigate with server-side membership checks on every workspace, note, version, comment, and sync endpoint.
 
 Database compromise:
 
-- Mitigate by storing note content only as encrypted envelopes.
+- Mitigate by storing note and active comment content only as encrypted envelopes.
+- Soft-deleted comment envelopes are cleared, though metadata and any copies already downloaded remain.
 - The manual sync client uses authenticated encryption, while the backend treats submitted envelope fields as opaque and cannot verify that clients performed authenticated encryption correctly.
 - Residual risk: metadata remains visible.
 
@@ -227,9 +234,11 @@ Conflict overwrite:
 - The protected envelope lives in ordinary IndexedDB rather than hardware-backed storage. There is no lock timeout, member/device key sharing, recovery, key rotation, parameter migration, or cryptographic revocation flow.
 - The local unlock password is independent of the account password. Creating a separate key in another browser or for another member does not grant access to ciphertext produced with the original key.
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
+- Comment envelope version 1 distinguishes comments from notes but does not bind ciphertext to a workspace ID, note ID, comment ID, parent ID, or author. A valid comment envelope can be replayed or swapped between comments using the same workspace key.
 - Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
+- Comment drafts are not durable offline, and comments have no retry queue, version history, conflict detection, or sync protocol. A failed request requires the user to retry while the in-memory draft remains mounted.
 - The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, unresolved and resolved conflict metadata, the selected resolved plaintext payload, and a password-protected workspace-key envelope in the browser profile. It does not persist the raw workspace key or unlock password.
 
 ## Documentation Requirements For Future Changes

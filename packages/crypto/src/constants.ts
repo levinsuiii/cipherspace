@@ -9,3 +9,4 @@ export const AES_GCM_TAG_LENGTH_BYTES = AES_GCM_TAG_LENGTH_BITS / 8;
 
 // Matches the current encrypted note API's decoded ciphertext limit.
 export const MAX_NOTE_CIPHERTEXT_BYTES = 1024 * 1024;
+export const MAX_COMMENT_CIPHERTEXT_BYTES = 64 * 1024;

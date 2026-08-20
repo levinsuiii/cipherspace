@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, encrypted immutable note versions, an isolated client crypto package, and the first push/pull note sync protocol.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, encrypted immutable note versions, encrypted note-scoped comments and replies, an isolated client crypto package, and the first push/pull note sync protocol.
 
 ## Prerequisites
 
@@ -73,7 +73,7 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
-The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, and manual conflict resolution. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflict history are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators.
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, encrypted note discussions, and manual conflict resolution. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflict history are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators. Comments use React Query and the authenticated API directly; they are not currently durable offline data or part of note push/pull sync.
 
 The workspace UI now provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext.
 
@@ -93,6 +93,18 @@ This v1 key is tied to the current user, workspace, and browser profile. There i
 10. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
 11. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
 12. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
+
+## Manual comments check
+
+1. Start the full stack, sign in as a workspace owner or editor, open a synced note, and unlock the workspace key. A local-only note asks you to sync it before starting a discussion.
+2. In **Discussion**, add a comment. Confirm it appears without a page reload and remains after reloading the page and unlocking the same key.
+3. Reply to the comment and confirm the reply is indented beneath its parent.
+4. Sign in as a viewer member. Confirm the discussion is readable after key provisioning/unlock, but the comment form is not shown.
+5. Confirm an editor can delete their own comment but not another member's comment. Confirm an owner can delete any comment in the workspace.
+6. After deletion, confirm the row remains as **Comment deleted** and its replies remain visible. The API response must contain `null` for ciphertext, nonce, and encryption metadata.
+7. Stop the API and confirm the discussion reports that comments require an online connection. Note drafts remain local-first, but comments are online-only in this slice.
+
+Comment bodies are encrypted in the browser with the unlocked AES-256-GCM workspace key and comment-specific authenticated metadata before upload. The backend stores only ciphertext, nonce, encryption metadata, authorship, parent linkage, and timestamps. Comment drafts exist only in React state until submitted; there is no offline queue, comment conflict handling, notification, or real-time delivery.
 
 ## Manual conflict-resolution check
 
@@ -162,9 +174,9 @@ Registration returns `201`, login and the current-user endpoint return `200`, an
 
 All workspace endpoints require the `cipherspace_session` cookie. A workspace creator becomes its first `owner`. Members have one of three roles:
 
-- `owner`: read the workspace, manage members, create and update notes, and soft-delete notes.
-- `editor`: read the workspace and create or update notes, but cannot manage members or delete notes.
-- `viewer`: read the workspace and encrypted note data, but cannot create, update, or delete notes.
+- `owner`: read the workspace, manage members, create and update notes, soft-delete notes, create comments, and soft-delete any comment.
+- `editor`: read the workspace, create or update notes, create comments, and soft-delete their own comments, but cannot manage members or delete notes.
+- `viewer`: read the workspace, encrypted note data, and comments, but cannot create, update, or delete notes or comments.
 
 Workspace names, member email addresses, and roles are server-visible metadata. Adding by email or user ID immediately adds an existing CipherSpace account; pending invitations and email delivery are not implemented.
 
@@ -262,6 +274,20 @@ Supported note endpoints are:
 
 All endpoints require authentication. Workspace members may read active notes and version history. Owners and editors may create notes and append versions. Only owners may soft-delete notes. Non-members receive `404`; viewers receive `403` for mutations. Soft-deleted notes and their versions remain stored but are excluded from normal note reads, lists, and version-history responses.
 
+## Encrypted comment API
+
+Comments are scoped to active notes. Comment bodies use the existing workspace key with a comment-specific AES-256-GCM envelope; the API validates and stores only opaque base64 ciphertext, nonce, and encryption metadata. Optional `parentCommentId` links a reply to another comment on the same note.
+
+Supported comment endpoints are:
+
+- `POST /api/workspaces/:workspaceId/notes/:noteId/comments`
+- `GET /api/workspaces/:workspaceId/notes/:noteId/comments`
+- `DELETE /api/workspaces/:workspaceId/notes/:noteId/comments/:commentId`
+
+Owners and editors can create comments. Every current workspace member can list them. Editors can soft-delete only their own comments; owners can soft-delete any comment as lightweight moderation. Viewers cannot create or delete comments, and non-members receive `404 workspace_not_found` for reads and writes.
+
+A soft-delete retains comment identity, authorship, parent linkage, and timestamps so replies stay understandable, but PostgreSQL clears the encrypted body, nonce, and encryption metadata. List responses represent those fields as `null`, so deleted comment content is never returned by the API. Comments are limited to 64 KiB of decoded ciphertext and are currently online-only: they have no IndexedDB cache, retry queue, sync cursor, conflict model, notifications, or real-time transport.
+
 ## Encrypted note sync API
 
 The first sync protocol adds:
@@ -305,5 +331,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

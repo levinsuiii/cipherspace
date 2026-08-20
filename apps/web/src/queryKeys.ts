@@ -1,4 +1,6 @@
 export const queryKeys = {
+  comments: (workspaceId: string, noteId: string) =>
+    ["workspaces", workspaceId, "notes", noteId, "comments"] as const,
   members: (workspaceId: string) => ["workspaces", workspaceId, "members"] as const,
   note: (workspaceId: string, noteId: string) =>
     ["workspaces", workspaceId, "notes", noteId] as const,

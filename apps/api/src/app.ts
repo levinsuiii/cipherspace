@@ -4,10 +4,13 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { PostgresAuthRepository, type AuthRepository } from "./auth/repository.js";
 import { AuthService } from "./auth/service.js";
 import { loadConfig, type AppConfig } from "./config.js";
+import { PostgresCommentRepository, type CommentRepository } from "./comments/repository.js";
+import { CommentService } from "./comments/service.js";
 import { createDatabase, type Database } from "./database/database.js";
 import { PostgresNoteRepository, type NoteRepository } from "./notes/repository.js";
 import { NoteService } from "./notes/service.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerCommentRoutes } from "./routes/comments.js";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerNoteRoutes } from "./routes/notes.js";
 import { registerSyncRoutes } from "./routes/sync.js";
@@ -24,6 +27,7 @@ export interface BuildAppOptions {
   config?: AppConfig;
   database?: Database;
   authRepository?: AuthRepository;
+  commentRepository?: CommentRepository;
   noteRepository?: NoteRepository;
   syncRepository?: SyncRepository;
   workspaceRepository?: WorkspaceRepository;
@@ -42,6 +46,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const database = options.database ?? createDatabase(config.DATABASE_URL);
   const ownsDatabase = options.database === undefined;
   const authRepository = options.authRepository ?? new PostgresAuthRepository(database);
+  const commentRepository = options.commentRepository ?? new PostgresCommentRepository(database);
   const workspaceRepository =
     options.workspaceRepository ?? new PostgresWorkspaceRepository(database);
   const noteRepository = options.noteRepository ?? new PostgresNoteRepository(database);
@@ -51,6 +56,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     config.SESSION_SECRET,
     config.SESSION_TTL_HOURS
   );
+  const commentService = new CommentService(commentRepository, workspaceRepository);
   const workspaceService = new WorkspaceService(workspaceRepository);
   const noteService = new NoteService(noteRepository, workspaceRepository);
   const syncService = new SyncService(syncRepository, workspaceRepository);
@@ -62,6 +68,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     authService,
     secureCookies: config.NODE_ENV === "production"
   });
+  registerCommentRoutes(app, { authService, commentService });
   registerNoteRoutes(app, { authService, noteService });
   registerSyncRoutes(app, { authService, syncService });
   registerWorkspaceRoutes(app, { authService, workspaceService });

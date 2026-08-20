@@ -13,6 +13,15 @@ export interface EncryptedNotePayload {
   nonce: string;
 }
 
+/** A serializable, authenticated comment-content envelope. */
+export interface EncryptedCommentPayload {
+  algorithm: typeof NOTE_ENCRYPTION_ALGORITHM;
+  ciphertext: string;
+  envelopeVersion: typeof NOTE_ENVELOPE_VERSION;
+  keyVersion: typeof WORKSPACE_KEY_VERSION;
+  nonce: string;
+}
+
 export type CryptoErrorCode =
   | "decryption_failed"
   | "encryption_failed"

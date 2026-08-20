@@ -60,7 +60,7 @@ Core entities:
 - NoteVersion: immutable encrypted content snapshot or operation record.
 - SyncOperation: client-created mutation with idempotency key and base version.
 - Conflict: explicit record when an operation cannot be applied cleanly.
-- Comment: deferred v1.1 entity tied to notes and note versions.
+- Comment: encrypted discussion entry tied to one note, with an optional same-note parent comment.
 
 Stable identifiers should be UUIDs generated client-side where offline creation is required. Server-generated IDs are acceptable for strictly online entities such as sessions.
 
@@ -70,7 +70,7 @@ Encrypted on the client before upload:
 
 - Note body.
 - Optional note title if UX allows encrypted-title limitations.
-- Future comment body.
+- Comment body.
 
 Visible to the server in v1:
 
@@ -109,6 +109,9 @@ Initial API areas:
 - `POST /api/workspaces/:workspaceId/sync/push` (implemented)
 - `GET /api/workspaces/:workspaceId/sync/pull` (implemented)
 - `POST /conflicts/:conflictId/resolve`
+- `POST /api/workspaces/:workspaceId/notes/:noteId/comments` (implemented)
+- `GET /api/workspaces/:workspaceId/notes/:noteId/comments` (implemented)
+- `DELETE /api/workspaces/:workspaceId/notes/:noteId/comments/:commentId` (implemented as content-redacting soft delete)
 
 API rules:
 
@@ -131,7 +134,7 @@ Initial pages:
 - Version history view.
 - Invitation acceptance.
 
-Defer comments UI until notes and sync are stable.
+The note detail page now includes an encrypted discussion section. Comments are online API state managed through TanStack Query rather than IndexedDB or the note sync queue.
 
 ## Implemented Frontend Foundation
 
@@ -169,7 +172,7 @@ The v1 local unlock password is separate from the account password and is never 
 
 ## Database Schema Plan
 
-The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`. The `encrypted_notes` name makes the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
+The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, `encrypted_comments`, and `sync_changes`. The encrypted entity names make the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
 
 Planned tables:
 
@@ -181,6 +184,7 @@ Planned tables:
 - `workspace_invitations`: id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at.
 - `encrypted_notes`: id, workspace_id, creator_user_id, encrypted_title, current_version_id, deleted_at, created_at, updated_at.
 - `note_versions`: id, note_id, version_number, parent_version_id, author_user_id, device_id, encrypted_payload, payload_nonce, payload_key_id, client_version, created_at.
+- `encrypted_comments`: id, workspace_id, note_id, author_user_id, parent_comment_id, encrypted_content, content_nonce, envelope_version, encryption_algorithm, content_key_id, deleted_at, created_at, updated_at.
 - `sync_operations`: id, workspace_id, note_id, author_user_id, device_id, operation_type, base_version_id, resulting_version_id, idempotency_key, created_at.
 - `sync_events`: id, workspace_id, sequence_number, event_type, entity_id, created_at.
 - `sync_cursors`: workspace_id, device_id, last_sequence_number, updated_at.
@@ -219,7 +223,9 @@ Sensitive local storage rules:
 - Use encrypted note snapshots for v1 rather than CRDTs.
 - Use monotonically increasing per-note versions assigned by the server.
 - Use manual conflict resolution for divergent edits.
-- Keep comments out of the first implementation slice.
+- Keep comments note-scoped and online-only in this slice. Use optional same-note parent links for lightweight threads; do not add chat, notifications, presence, or real-time transport.
+- Encrypt comment bodies in the client with the existing workspace AES-GCM key and a comment-specific authenticated-data context. Store only opaque ciphertext envelopes on the backend.
+- Preserve deleted comment identity and parent linkage while clearing ciphertext, nonce, and encryption metadata. Authors with owner/editor write roles can delete their own comments, and owners can moderate any comment.
 - Prefer explicit APIs and schemas over implicit transport conventions.
 - Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.
 - Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.

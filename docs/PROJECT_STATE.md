@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, an isolated client crypto package, durable local-first storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, and manual note-edit conflict resolution. Multi-user key sharing, recovery, rotation, and automatic merging remain separate future work.
+CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, and manual note-edit conflict resolution. Multi-user key sharing, recovery, rotation, automatic merging, and offline comment sync remain separate future work.
 
 ## Current Status
 
@@ -59,6 +59,12 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Raw 32-byte workspace keys can be exported and imported for wrapping. The v1 local flow protects them with PBKDF2-HMAC-SHA-256 (random 128-bit salt, 600,000 iterations) and AES-256-GCM before IndexedDB persistence; unwrapped keys remain in memory only.
 - Member wrapping and sharing, recovery, parameter migration, key rotation, and revocation are explicitly not implemented.
 - Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, protected-key round trips, wrong password/context, wrong-key and ciphertext-authentication failures, and malformed payloads.
+- Migration `0006_encrypted_comments.sql` adds note-scoped encrypted comments, optional same-note parent links, role-safe content lifecycle constraints, and indexes for ordered discussion reads.
+- Owners and editors can create encrypted comments. All workspace members can list comments on active notes; viewers remain read-only and non-members receive workspace-not-found responses.
+- Editors can soft-delete their own comments, while owners can soft-delete any comment. Deletion preserves the thread placeholder and metadata but clears ciphertext, nonce, and encryption metadata from PostgreSQL and API responses.
+- The note detail UI lists and decrypts comments after workspace unlock, supports parent-linked replies, updates query state immediately after create/delete, and shows role-aware controls.
+- Comment encryption uses AES-256-GCM through `@cipherspace/crypto` with fresh 96-bit nonces and a comment-specific authenticated-data context. Focused crypto tests verify round trips, fresh nonces, and separation from note envelopes.
+- Comments deliberately use direct authenticated API calls and TanStack Query rather than IndexedDB or the note sync engine. A note must have a server version before discussion is enabled. Drafts exist only in component state, so comments require a live connection and have no offline retry or conflict behavior.
 
 The established stack is React, TypeScript, Vite, React Router, TanStack Query, Dexie, and IndexedDB for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. `fake-indexeddb` provides deterministic local persistence tests.
 
@@ -80,10 +86,11 @@ Included in v1:
 - Basic note version history.
 - Basic workspace role model: owner, editor, and viewer.
 - Server-side authorization for workspace, note, and sync access.
+- Encrypted comments and lightweight replies under notes.
 
-Deferred until after notes, encryption, and sync are stable:
+Deferred until after the current collaboration slice:
 
-- Comments on notes.
+- Offline comment persistence and sync.
 - Rich-text editing beyond a simple structured document or Markdown field.
 - Advanced sharing permissions.
 - Recovery flows beyond a clearly documented password-reset limitation.
@@ -131,7 +138,7 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 10. Implement sync operation queue, push/pull endpoints, idempotency, retry behavior, and manual UI invocation. Complete for explicit user-triggered sync; automatic scheduling is deferred.
 11. Add version-based conflict detection and manual resolution UI. Complete for note-edit conflicts, including keep local, accept remote, manual merge, preserved resolution metadata, and resolved-version sync.
 12. Add version history UI and restore-from-version behavior.
-13. Add comments after note sync is stable, using the same encrypted-content and version-aware model.
+13. Add comments after note sync is stable, using encrypted content and lightweight parent-linked replies. Complete for online comments; offline comment sync and versioning remain deferred.
 14. Add end-to-end tests for authentication, offline edit durability, sync, conflicts, and access control.
 15. Add Docker Compose only after the backend and database shape are real. Complete for the backend foundation.
 
@@ -143,14 +150,15 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
-- Authorization is implemented for workspace, membership, note, note-version, and sync endpoints. Non-members receive workspace-not-found responses.
+- Authorization is implemented for workspace, membership, note, note-version, comment, and sync endpoints. Non-members receive workspace-not-found responses.
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
 - The protected key is available only in the browser profile where it was created. There is no recovery, multi-user/device key sharing, account-password integration, parameter migration, rotation, revocation, or cryptographic deletion. Losing the local unlock password or browser data can make remote ciphertext unrecoverable.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - Server change events and idempotency outcomes are durable. Pull cursors and conflict records are device-local in IndexedDB rather than server cursor/conflict tables.
-- Pending invitations, email delivery, comments, delete-conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
+- Pending invitations, email delivery, offline comment sync, delete-conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
+- Comment bodies are encrypted before transport, but comment IDs, note/workspace links, authors, parent links, timestamps, deletion state, ciphertext sizes, and discussion activity remain server-visible metadata. Comments are not cached in IndexedDB and cannot be created or read offline.
 - Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds resolved status, action, timestamp, payload, and replacement-operation metadata while retaining the original conflict snapshots.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
 - Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.

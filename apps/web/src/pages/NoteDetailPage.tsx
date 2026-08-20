@@ -4,6 +4,7 @@ import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom
 
 import { api } from "../api/client";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { CommentSection } from "../comments/CommentSection";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
@@ -212,6 +213,12 @@ export function NoteDetailPage() {
           )}
         </aside>
       </div>
+      <CommentSection
+        isServerBacked={Boolean(latestVersion)}
+        noteId={note.id}
+        role={workspace.role}
+        workspaceId={workspace.id}
+      />
     </section>
   );
 }

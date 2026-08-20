@@ -207,6 +207,23 @@ summary { padding: 0.75rem 0; cursor: pointer; color: var(--muted); font-size: 0
 .editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .read-only-message, .local-only-message { margin-bottom: 0; font-size: 0.82rem; }
 .cached-envelope { margin-top: 1rem; }
+.comment-section { margin-top: 1.5rem; }
+.comment-section .section-heading p { margin: 0.25rem 0 0; font-size: 0.8rem; }
+.comment-thread { display: flex; flex-direction: column; }
+.comment-item { padding: 1rem 0; border-top: 1px solid var(--border); }
+.comment-item__header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.comment-item__header strong { font-size: 0.86rem; }
+.comment-item__header time { color: var(--muted); font-size: 0.7rem; }
+.comment-content { margin: 0.55rem 0 0; color: var(--text); white-space: pre-wrap; }
+.comment-placeholder, .comment-empty, .comment-key-message { margin: 0.55rem 0 0; font-size: 0.82rem; font-style: italic; }
+.comment-placeholder--error { color: var(--danger); }
+.comment-item__actions { display: flex; gap: 0.8rem; margin-top: 0.65rem; }
+.comment-item__actions button, .comment-replying button { padding: 0; border: 0; cursor: pointer; color: var(--accent); background: transparent; font-size: 0.72rem; }
+.comment-replies { margin: 0.9rem 0 -1rem 1rem; padding-left: 1rem; border-left: 1px solid #345247; }
+.comment-form { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.comment-form textarea { min-height: 6rem; font-family: inherit; font-size: 0.88rem; }
+.comment-form .button { align-self: flex-start; }
+.comment-replying { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.65rem 0.75rem; border-radius: 0.35rem; color: #b9d9ce; background: #10231d; font-size: 0.78rem; }
 .cached-envelope dl { margin-bottom: 0; padding: 0 0.75rem; }
 .conflict-detail { display: flex; flex-direction: column; gap: 1.5rem; }
 .conflict-detail .page-header { margin-bottom: 0; }

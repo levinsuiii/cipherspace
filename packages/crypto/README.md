@@ -1,12 +1,14 @@
 # `@cipherspace/crypto`
 
-Browser-compatible client-side cryptography for CipherSpace note content. The package uses the platform Web Crypto API and has no runtime dependencies.
+Browser-compatible client-side cryptography for CipherSpace note and comment content plus local workspace-key protection. The package uses the platform Web Crypto API and has no runtime dependencies.
 
 ## API
 
 ```ts
 import {
+  decryptCommentContent,
   decryptNoteContent,
+  encryptCommentContent,
   encryptNoteContent,
   exportWorkspaceKey,
   generateWorkspaceKey,
@@ -16,11 +18,13 @@ import {
 const workspaceKey = await generateWorkspaceKey();
 const payload = await encryptNoteContent("local plaintext", workspaceKey);
 const plaintext = await decryptNoteContent(payload, workspaceKey);
+const commentPayload = await encryptCommentContent("review context", workspaceKey);
+const comment = await decryptCommentContent(commentPayload, workspaceKey);
 ```
 
 `generateWorkspaceKey()` creates an extractable 256-bit AES-GCM `CryptoKey` with `encrypt` and `decrypt` usages. `exportWorkspaceKey()` and `importWorkspaceKey()` serialize only the raw key material as canonical base64. Exported key material is sensitive and must be wrapped before it is persisted or sent anywhere. This package does not provide that wrapping or sharing flow yet.
 
-## Note envelope
+## Content envelopes
 
 `encryptNoteContent()` returns this JSON-safe structure:
 
@@ -34,11 +38,11 @@ interface EncryptedNotePayload {
 }
 ```
 
-Each encryption uses a fresh nonce from `crypto.getRandomValues()`. AES-GCM authenticates the fixed envelope metadata as additional authenticated data. Decryption strictly validates the envelope before calling Web Crypto and returns the same safe error for a wrong key or failed authentication.
+Comment envelopes have the same serializable field shape. Each encryption uses a fresh nonce from `crypto.getRandomValues()`. AES-GCM authenticates fixed envelope metadata as additional authenticated data; notes and comments use distinct contexts, so one content class cannot be decrypted as the other. Decryption strictly validates the envelope before calling Web Crypto and returns the same safe error for a wrong key or failed authentication.
 
-The current note API uses different field names. A later frontend integration should map `ciphertext` to `encryptedContent`, `nonce` to `contentNonce`, and the versioned metadata to `encryptionMetadata`. This task intentionally does not change the backend contract.
+The frontend maps `ciphertext` to `encryptedContent`, `nonce` to `contentNonce`, and the versioned metadata to the note and comment API's `encryptionMetadata` object. The backend never calls this package and treats the resulting values as opaque.
 
-The package enforces the current API's 1 MiB decoded-ciphertext limit. With the 16-byte GCM tag, plaintext may occupy at most 1,048,560 UTF-8 bytes.
+The package enforces the current note API's 1 MiB decoded-ciphertext limit and the comment API's 64 KiB limit. Both limits include the 16-byte GCM tag.
 
 ## Commands
 
@@ -52,9 +56,9 @@ npm run build --workspace @cipherspace/crypto
 
 ## Current limits
 
-- Workspace keys remain in caller-managed memory; secure persistence is not implemented.
+- Unwrapped workspace keys remain in caller-managed memory. The package can protect a raw workspace key with PBKDF2-HMAC-SHA-256 and AES-256-GCM, but persistence remains the caller's responsibility.
 - Raw key export exists only to support future wrapping. Never store or transmit its result unwrapped.
 - Member key sharing, key wrapping, recovery, rotation, revocation, and cryptographic deletion are not implemented.
-- Passphrase derivation is not implemented because v1 has no agreed password-based unlock or recovery design. Authentication passwords are not reused as encryption keys.
-- Version 1 additional authenticated data binds the envelope format, algorithm, and key version, but not a workspace ID, note ID, or server version. A later integration must design contextual binding if it needs to reject replay or ciphertext swapping between notes encrypted with the same workspace key.
-- The package encrypts note content only. It is not integrated with the current note form, IndexedDB, or sync.
+- The local unlock passphrase is separate from the account password. Recovery, member/device provisioning, and KDF parameter migration are not implemented.
+- Version 1 additional authenticated data binds the content class, envelope format, algorithm, and key version, but not a workspace ID, note ID, comment ID, author, parent, or server version. A later integration must design contextual binding if it needs to reject replay or ciphertext swapping within the same content class and workspace key.
+- The package contains no storage, transport, authorization, sync, or UI behavior.

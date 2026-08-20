@@ -1,6 +1,8 @@
 import type {
+  CreateCommentInput,
   CreateNoteInput,
   Credentials,
+  EncryptedComment,
   EncryptedNote,
   EncryptedNoteDetail,
   SyncPullResponse,
@@ -83,6 +85,22 @@ export const api = {
         body: JSON.stringify(credentials),
         method: "POST"
       })
+  },
+  comments: {
+    create: (workspaceId: string, noteId: string, input: CreateCommentInput) =>
+      request<{ comment: EncryptedComment }>(
+        `${workspacePath(workspaceId)}/notes/${encodeURIComponent(noteId)}/comments`,
+        { body: JSON.stringify(input), method: "POST" }
+      ),
+    delete: (workspaceId: string, noteId: string, commentId: string) =>
+      request<void>(
+        `${workspacePath(workspaceId)}/notes/${encodeURIComponent(noteId)}/comments/${encodeURIComponent(commentId)}`,
+        { method: "DELETE" }
+      ),
+    list: (workspaceId: string, noteId: string) =>
+      request<{ comments: EncryptedComment[] }>(
+        `${workspacePath(workspaceId)}/notes/${encodeURIComponent(noteId)}/comments`
+      )
   },
   workspaces: {
     create: (name: string) =>

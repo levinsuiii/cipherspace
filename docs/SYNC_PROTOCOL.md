@@ -19,7 +19,7 @@ The first protocol is implemented:
 - The workspace UI can create or unlock a stable, locally protected workspace key and invoke the sync engine manually.
 - Manual sync reports `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`; live pending and conflict counts update after sync and resolution transitions.
 
-Automatic merging, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. The sync engine requires an unlocked `CryptoKey` supplied by its local key provider. It encrypts through `@cipherspace/crypto` and never uploads the plaintext IndexedDB draft or persists a raw workspace key.
+Automatic merging, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. The sync engine requires an unlocked `CryptoKey` supplied by its local key provider. It encrypts through `@cipherspace/crypto` and never uploads the plaintext IndexedDB draft or persists a raw workspace key.
 
 ## Goals
 
@@ -223,7 +223,7 @@ Deletes are server tombstones. An accepted delete records the current base versi
 - WebSockets, real-time collaboration, or push notifications.
 - Background/service-worker sync.
 - Workspace-key sharing, recovery, rotation, or revocation.
-- Comments.
+- Offline comment persistence, comment sync, or comment conflicts.
 - Version restore.
 
 ## Backward Awareness
