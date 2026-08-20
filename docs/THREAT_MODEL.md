@@ -8,7 +8,9 @@ The backend now provides email/password account registration, database-backed se
 
 Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package now generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note content with 128-bit authentication tags, and validates versioned envelopes. Fixed envelope metadata is authenticated as additional data. Wrong keys, tampered ciphertext, and malformed payloads fail without returning plaintext.
 
-The frontend is not connected to these primitives yet. Its explicitly labeled development form still submits opaque placeholders and must not be used for plaintext or sensitive content. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, local-first storage, and sync remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Current cryptographic guarantees therefore apply only when callers use the crypto package correctly; they do not yet describe an end-to-end product flow.
+The frontend is not connected to these primitives yet. The local-first editor now stores user-scoped plaintext title/body drafts in IndexedDB and durable pending local payloads, but it never uploads them. Workspace and encrypted server-envelope metadata are cached separately. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, encrypted local drafts, and sync remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Current cryptographic guarantees therefore apply only when callers use the crypto package correctly; they do not yet describe an end-to-end product flow.
+
+The browser stores the last successfully verified user profile in local storage so the matching IndexedDB scope can be reopened when session verification fails because the network is unavailable. It does not store the HTTP-only session token. An explicit 401 response or successful logout clears this profile cache. This offline identity is a local routing/data-selection convenience, not proof of current server authorization.
 
 ## Security Goals
 
@@ -182,7 +184,8 @@ Malicious or compromised server:
 Compromised user device:
 
 - Out of scope for strong protection once the user unlocks content.
-- Mitigate by minimizing persistent plaintext and avoiding sensitive logs.
+- Avoid sensitive logs and scope local records by user ID.
+- Residual risk: local note title/body drafts and pending payloads are currently plaintext in IndexedDB and remain after logout until browser data is cleared. Anyone who can access the browser profile, execute same-origin code, or compromise the device may read them.
 
 Lost password:
 
@@ -212,6 +215,8 @@ Conflict overwrite:
 - There is no implemented secure storage, lock timeout, member key sharing, recovery, key rotation, or cryptographic revocation flow.
 - Passphrase-based derivation is intentionally absent until unlock and recovery semantics are designed; account passwords do not currently unlock encrypted workspace keys.
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
+- Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
+- The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 
 ## Documentation Requirements For Future Changes
 

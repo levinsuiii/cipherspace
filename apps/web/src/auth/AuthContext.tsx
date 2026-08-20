@@ -3,6 +3,7 @@ import { createContext, type PropsWithChildren, useContext } from "react";
 
 import { api, ApiError } from "../api/client";
 import type { Credentials, User } from "../api/types";
+import { cacheOfflineUser, clearOfflineUser, readOfflineUser } from "./offlineUserCache";
 
 const authQueryKey = ["auth", "me"] as const;
 
@@ -23,11 +24,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
     queryKey: authQueryKey,
     queryFn: async () => {
       try {
-        return (await api.auth.me()).user;
+        const user = (await api.auth.me()).user;
+        cacheOfflineUser(user);
+        return user;
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
+          clearOfflineUser();
           return null;
         }
+        const cachedUser = readOfflineUser();
+        if (cachedUser) return cachedUser;
         throw error;
       }
     },
@@ -39,6 +45,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     operation: () => Promise<{ user: User }>
   ): Promise<void> => {
     const { user } = await operation();
+    cacheOfflineUser(user);
     queryClient.setQueryData(authQueryKey, user);
   };
 
@@ -50,6 +57,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         login: (credentials) => establishSession(() => api.auth.login(credentials)),
         logout: async () => {
           await api.auth.logout();
+          clearOfflineUser();
           queryClient.setQueryData(authQueryKey, null);
           queryClient.removeQueries({
             predicate: (query) => query.queryKey[0] !== authQueryKey[0]

@@ -1,60 +1,188 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useOutletContext, useParams } from "react-router-dom";
+import { type FormEvent, useEffect, useState } from "react";
+import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
+import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 import { formatDate, shortenOpaqueValue } from "../utils";
 
 export function NoteDetailPage() {
   const { workspace } = useOutletContext<WorkspaceOutletContext>();
   const { noteId = "" } = useParams();
-  const noteQuery = useQuery({
+  const localData = useLocalData();
+  const navigate = useNavigate();
+  const [body, setBody] = useState("");
+  const [title, setTitle] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const localNoteQuery = useLocalQuery(
+    () => localData.getNote(noteId),
+    [localData, noteId]
+  );
+  const versionQuery = useLocalQuery(
+    () => localData.getLatestVersion(noteId),
+    [localData, noteId]
+  );
+  const pendingCountQuery = useLocalQuery(
+    () => localData.countPendingChangesForNote(noteId),
+    [localData, noteId]
+  );
+  const serverNoteQuery = useQuery({
     enabled: Boolean(noteId),
     queryKey: queryKeys.note(workspace.id, noteId),
-    queryFn: () => api.notes.get(workspace.id, noteId)
+    queryFn: async () => {
+      const result = await api.notes.get(workspace.id, noteId);
+      await localData.cacheServerNoteDetail(result);
+      return result;
+    },
+    retry: false
   });
+  const note = localNoteQuery.data;
+  const latestVersion = versionQuery.data;
+  const canEdit = workspace.role !== "viewer";
+  const canDelete = workspace.role === "owner";
 
-  if (noteQuery.isLoading) return <LoadingState label="Loading note envelope…" />;
-  if (noteQuery.isError) {
-    return <ErrorState error={noteQuery.error} onRetry={() => void noteQuery.refetch()} />;
+  useEffect(() => {
+    setTitle(note?.local_note_payload?.title ?? "");
+    setBody(note?.local_note_payload?.body ?? "");
+  }, [note?.id, note?.local_revision]);
+
+  if (!note && (localNoteQuery.isLoading || serverNoteQuery.isLoading || serverNoteQuery.isSuccess)) {
+    return <LoadingState label="Loading local note…" />;
   }
-  if (!noteQuery.data) return <ErrorState error={new Error("Note not found.")} />;
+  if (!note && serverNoteQuery.isError) {
+    return <ErrorState error={serverNoteQuery.error} onRetry={() => void serverNoteQuery.refetch()} />;
+  }
+  if (!note) return <ErrorState error={new Error("Note not found in the local cache.")} />;
 
-  const { latestVersion, note } = noteQuery.data;
+  const handleSave = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+
+    setSaveError(null);
+    setSaveMessage(null);
+    setIsSaving(true);
+    try {
+      await localData.editNote(note.id, { body, title: trimmedTitle });
+      setSaveMessage("Saved locally. This change is waiting for future sync.");
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save the local note.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setSaveError(null);
+    setIsDeleting(true);
+    try {
+      await localData.deleteNote(note.id);
+      navigate(`/workspaces/${workspace.id}/notes`, { replace: true });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not delete the local note.");
+      setIsDeleting(false);
+    }
+  };
+
+  const displayTitle = note.local_note_payload?.title ??
+    shortenOpaqueValue(note.encrypted_title, "Encrypted note");
+
   return (
     <section className="note-detail">
       <Link className="back-link" to={`/workspaces/${workspace.id}/notes`}>← Back to notes</Link>
+      {serverNoteQuery.isError ? (
+        <div className="offline-callout" role="status">
+          The server is unavailable. Editing continues against the durable local copy.
+        </div>
+      ) : null}
       <header className="page-header page-header--compact">
         <div>
-          <p className="eyebrow">Encrypted note envelope</p>
-          <h2>{shortenOpaqueValue(note.encryptedTitle, "Untitled encrypted note")}</h2>
-          <p>This shell displays server-visible metadata and the latest opaque payload only.</p>
+          <p className="eyebrow">Local note editor</p>
+          <h2>{displayTitle}</h2>
+          <p>Every save updates IndexedDB before a future sync attempt can occur.</p>
         </div>
-        <span className="version-badge">Version {latestVersion.versionNumber}</span>
+        {(pendingCountQuery.data ?? 0) > 0 ? (
+          <span className="unsynced-badge">{pendingCountQuery.data} unsynced</span>
+        ) : (
+          <span className="version-badge">
+            {latestVersion ? `Server version ${latestVersion.version_number}` : "Local only"}
+          </span>
+        )}
       </header>
 
       <div className="detail-grid">
-        <section className="panel envelope-panel">
-          <h3>Latest encrypted payload</h3>
-          <dl>
-            <div><dt>Encrypted content</dt><dd><code>{latestVersion.encryptedContent}</code></dd></div>
-            <div><dt>Content nonce</dt><dd><code>{latestVersion.contentNonce}</code></dd></div>
-            <div><dt>Algorithm label</dt><dd>{latestVersion.encryptionMetadata.algorithm}</dd></div>
-            <div><dt>Envelope version</dt><dd>{latestVersion.encryptionMetadata.envelopeVersion}</dd></div>
-            <div><dt>Key ID</dt><dd><code>{latestVersion.encryptionMetadata.keyId}</code></dd></div>
-          </dl>
+        <section className="panel">
+          <form className="form-stack note-editor" onSubmit={(event) => void handleSave(event)}>
+            <label>
+              Title
+              <input
+                disabled={!canEdit}
+                maxLength={200}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder={note.local_note_payload ? "Note title" : "Create a local draft title"}
+                required
+                value={title}
+              />
+            </label>
+            <label>
+              Note body
+              <textarea
+                disabled={!canEdit}
+                onChange={(event) => setBody(event.target.value)}
+                placeholder={note.local_note_payload ? "Write locally…" : "No decrypted local draft exists yet."}
+                rows={18}
+                value={body}
+              />
+            </label>
+            {saveError ? <div className="form-error" role="alert">{saveError}</div> : null}
+            {saveMessage ? <div className="success-callout" role="status">{saveMessage}</div> : null}
+            {canEdit ? (
+              <div className="editor-actions">
+                <button className="button button--primary" disabled={isSaving || !title.trim()}>
+                  {isSaving ? "Saving locally…" : "Save local change"}
+                </button>
+                {canDelete ? (
+                  <button
+                    className="button button--danger"
+                    disabled={isDeleting}
+                    onClick={() => void handleDelete()}
+                    type="button"
+                  >
+                    {isDeleting ? "Deleting locally…" : "Delete locally"}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="read-only-message">Viewer access is read-only.</p>
+            )}
+          </form>
         </section>
         <aside className="panel workspace-summary">
-          <h3>Record metadata</h3>
+          <h3>Local record</h3>
           <dl>
-            <div><dt>Updated</dt><dd>{formatDate(note.updatedAt)}</dd></div>
-            <div><dt>Created by</dt><dd className="mono">{note.createdBy}</dd></div>
+            <div><dt>Updated</dt><dd>{formatDate(note.updated_at)}</dd></div>
+            <div><dt>Local revision</dt><dd>{note.local_revision}</dd></div>
+            <div><dt>Base version ID</dt><dd className="mono">{note.base_version_id ?? "Local only"}</dd></div>
             <div><dt>Note ID</dt><dd className="mono">{note.id}</dd></div>
-            <div><dt>Version ID</dt><dd className="mono">{latestVersion.id}</dd></div>
-            <div><dt>Client version</dt><dd>{latestVersion.clientVersion ?? "Not supplied"}</dd></div>
           </dl>
+          {latestVersion ? (
+            <details className="cached-envelope">
+              <summary>Cached server envelope</summary>
+              <dl>
+                <div><dt>Version</dt><dd>{latestVersion.version_number}</dd></div>
+                <div><dt>Algorithm</dt><dd>{latestVersion.encryption_algorithm}</dd></div>
+                <div><dt>Key ID</dt><dd className="mono">{latestVersion.key_id}</dd></div>
+              </dl>
+            </details>
+          ) : (
+            <p className="local-only-message">This note has no cached server version.</p>
+          )}
         </aside>
       </div>
     </section>

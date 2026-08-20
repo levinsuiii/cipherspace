@@ -13,7 +13,9 @@ CipherSpace v1 should use a simple local-first, version-based sync protocol. It 
 
 ## Implementation Status
 
-The database foundation includes a `sync_changes` sequence table for future workspace change feeds. The direct note API now stores immutable encrypted versions, server-assigned version numbers, current-version pointers, parent-version pointers, and optional client revision metadata. Direct appends always parent to the current server version; they do not implement the base-version check described below. No sync request schemas, endpoints, cursors, idempotency processing, conflict detection, or client behavior in this document are implemented yet.
+The database foundation includes a `sync_changes` sequence table for future workspace change feeds. The direct note API stores immutable encrypted versions, server-assigned version numbers, current-version pointers, parent-version pointers, and optional client revision metadata. Direct appends always parent to the current server version; they do not implement the base-version check described below.
+
+The browser now implements only the durable first part of the local-first flow: user-scoped IndexedDB note/cache records and a pending change queue. Local create, edit, and tombstone-delete operations are stored before the UI reports success and survive reloads. There is still no queue processor, sync request schema, push/pull endpoint, cursor advancement, retry policy, idempotency processing, conflict detection, or conflict resolution.
 
 ## Non-Goals For v1
 
@@ -70,6 +72,24 @@ The server accepts an edit only when `base_version_id` equals the note's current
 8. Client pulls remote changes with `POST /sync/pull`.
 
 Local persistence must happen before step 4.
+
+## Implemented Local Change Format
+
+IndexedDB schema version 1 stores pending changes with these fields:
+
+- `id`: client-generated UUID and future operation/idempotency identity.
+- `user_id`: local account scope; this is not part of a future wire payload.
+- `workspace_id`: containing workspace UUID.
+- `note_id`: stable client-generated or server-provided note UUID.
+- `operation_type`: `create_note`, `update_note`, or `delete_note`.
+- `encrypted_payload`: reserved for a future crypto-envelope serialization; currently `null`.
+- `local_note_payload`: current local `{ title, body }` snapshot for create/update, or `null` for delete.
+- `base_version_id`: cached server version edited from, or `null` for local-only notes.
+- `local_revision`: monotonically increasing per-note client revision.
+- `created_at` and `updated_at`: client ISO-8601 timestamps.
+- `status`: `pending`, `syncing`, `failed`, or `synced`; local mutations currently produce only `pending`.
+
+Each local note write and corresponding pending change are committed in the same IndexedDB transaction. Repeated unsent updates reuse one pending `update_note` record and replace its local payload and revision. Create and delete stay as separate operations so later sync work can preserve their ordering. The future queue processor must encrypt `local_note_payload` with `@cipherspace/crypto`, validate the envelope, define idempotency behavior, and only then construct a wire request. The current direct note API is not called by the local editor.
 
 ## Push Protocol
 

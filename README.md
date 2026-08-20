@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend foundation, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, server-side storage for encrypted notes and immutable note versions, and an isolated client-side crypto package.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, server-side storage for encrypted notes and immutable note versions, and an isolated client-side crypto package.
 
 ## Prerequisites
 
@@ -71,9 +71,9 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
-The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, note listing, an opaque note-detail shell, and development-only note creation fields matching the existing encrypted-note API.
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, and a local-first note editor. Workspaces, notes, cached encrypted versions, pending changes, and reserved sync metadata are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays an unsynced indicator.
 
-The note form does **not** encrypt content. Its prefilled values are harmless base64 placeholders used only to exercise the API contract. Do not enter plaintext secrets or sensitive note content until client-side encryption is implemented.
+The local editor does **not** encrypt or upload its payload yet. Titles and bodies are plaintext in the browser profile's IndexedDB, including after logout, and pending changes wait for a future crypto-and-sync step. Do not treat this implementation as encrypted at-rest storage.
 
 ## Manual frontend check
 
@@ -81,9 +81,11 @@ The note form does **not** encrypt content. Its prefilled values are harmless ba
 2. Register with an email and a password containing 12–128 characters. Registration should open the empty workspace page.
 3. Create a workspace and confirm its overview shows the current account as an owner.
 4. Open **Notes** and confirm the empty state appears.
-5. Submit the prefilled development note form. The new note-detail shell should show version 1 and the same opaque payload metadata.
-6. Return to the note list and workspace list, then sign out. Protected routes should redirect to sign-in.
-7. Sign back in and confirm the workspace and note remain available.
+5. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes.
+6. Edit the note, save it locally, and reload the page. Confirm the latest title/body and unsynced state remain.
+7. Stop the API or disable the browser network, reload, and confirm the cached workspace and note remain editable. Re-enable the API afterward.
+8. As a workspace owner, delete the note locally and confirm it disappears from the note list while the workspace still reports pending changes.
+9. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache.
 
 ## Authentication
 
@@ -173,7 +175,7 @@ Non-members receive `404` for workspace-scoped reads so the API does not disclos
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package now provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption, but it is not connected to the frontend form yet. Key persistence, wrapping, and sharing are not implemented.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption, but it is not connected to the local editor or pending queue yet. Key persistence, wrapping, and sharing are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -240,5 +242,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The first online-only frontend foundation, backend foundation, user authentication, workspaces, membership roles, encrypted-note/version APIs, and isolated client encryption primitives are implemented. Frontend encryption integration, sync, local client storage, offline mode, comments, pending invitations, email delivery, key sharing, and conflict resolution remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, durable local note storage and pending queue, backend foundation, user authentication, workspaces, membership roles, encrypted-note/version APIs, and isolated client encryption primitives are implemented. Frontend encryption integration, queue processing, push/pull sync, conflicts, comments, pending invitations, email delivery, and key sharing remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

@@ -4,20 +4,32 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 import { formatDate } from "../utils";
 
 export function WorkspacesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const localData = useLocalData();
   const [name, setName] = useState("");
+  const cachedWorkspacesQuery = useLocalQuery(
+    () => localData.listWorkspaces(),
+    [localData]
+  );
   const workspacesQuery = useQuery({
     queryKey: queryKeys.workspaces,
-    queryFn: api.workspaces.list
+    queryFn: async () => {
+      const result = await api.workspaces.list();
+      await localData.cacheWorkspaces(result.workspaces);
+      return result;
+    },
+    retry: false
   });
   const createMutation = useMutation({
     mutationFn: api.workspaces.create,
     onSuccess: async ({ workspace }) => {
+      await localData.cacheWorkspace(workspace);
       await queryClient.invalidateQueries({ queryKey: queryKeys.workspaces });
       navigate(`/workspaces/${workspace.id}`);
     }
@@ -31,6 +43,8 @@ export function WorkspacesPage() {
     }
   };
 
+  const workspaces = cachedWorkspacesQuery.data ?? [];
+
   return (
     <section>
       <header className="page-header">
@@ -43,22 +57,29 @@ export function WorkspacesPage() {
 
       <div className="split-layout">
         <div>
-          {workspacesQuery.isLoading ? <LoadingState label="Loading workspaces…" /> : null}
-          {workspacesQuery.isError ? (
+          {cachedWorkspacesQuery.isLoading && workspacesQuery.isLoading ? (
+            <LoadingState label="Loading workspaces…" />
+          ) : null}
+          {workspacesQuery.isError && workspaces.length === 0 ? (
             <ErrorState
               error={workspacesQuery.error}
               onRetry={() => void workspacesQuery.refetch()}
             />
           ) : null}
-          {workspacesQuery.data?.workspaces.length === 0 ? (
+          {workspacesQuery.isError && workspaces.length > 0 ? (
+            <div className="offline-callout" role="status">
+              Showing cached workspaces while the server is unavailable.
+            </div>
+          ) : null}
+          {workspaces.length === 0 && !workspacesQuery.isLoading && !workspacesQuery.isError ? (
             <EmptyState
               description="Create your first workspace using the form on this page."
               title="No workspaces yet"
             />
           ) : null}
-          {workspacesQuery.data?.workspaces.length ? (
+          {workspaces.length ? (
             <div className="card-list">
-              {workspacesQuery.data.workspaces.map((workspace) => (
+              {workspaces.map((workspace) => (
                 <Link className="workspace-card" key={workspace.id} to={`/workspaces/${workspace.id}`}>
                   <div className="workspace-card__mark" aria-hidden="true">
                     {workspace.name.slice(0, 1).toUpperCase()}
@@ -70,7 +91,7 @@ export function WorkspacesPage() {
                         {workspace.role}
                       </span>
                     </div>
-                    <p>Updated {formatDate(workspace.updatedAt)}</p>
+                    <p>Updated {formatDate(workspace.updated_at)}</p>
                   </div>
                   <span className="card-arrow" aria-hidden="true">→</span>
                 </Link>

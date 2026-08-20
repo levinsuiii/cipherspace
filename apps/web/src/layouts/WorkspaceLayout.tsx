@@ -4,6 +4,7 @@ import { NavLink, Outlet, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Workspace } from "../api/types";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 
 export interface WorkspaceOutletContext {
@@ -12,33 +13,70 @@ export interface WorkspaceOutletContext {
 
 export function WorkspaceLayout() {
   const { workspaceId = "" } = useParams();
+  const localData = useLocalData();
+  const cachedWorkspaceQuery = useLocalQuery(
+    () => localData.getWorkspace(workspaceId),
+    [localData, workspaceId]
+  );
+  const pendingChangesQuery = useLocalQuery(
+    () => localData.countPendingChanges(workspaceId),
+    [localData, workspaceId]
+  );
   const workspaceQuery = useQuery({
     enabled: Boolean(workspaceId),
     queryKey: queryKeys.workspace(workspaceId),
-    queryFn: () => api.workspaces.get(workspaceId)
+    queryFn: async () => {
+      const result = await api.workspaces.get(workspaceId);
+      await localData.cacheWorkspace(result.workspace);
+      return result;
+    },
+    retry: false
   });
 
-  if (workspaceQuery.isLoading) {
+  const cachedWorkspace = cachedWorkspaceQuery.data;
+  const workspace: Workspace | undefined = workspaceQuery.data?.workspace ??
+    (cachedWorkspace
+      ? {
+          createdAt: cachedWorkspace.created_at,
+          id: cachedWorkspace.id,
+          name: cachedWorkspace.name,
+          role: cachedWorkspace.role,
+          updatedAt: cachedWorkspace.updated_at
+        }
+      : undefined);
+
+  if (!workspace && (workspaceQuery.isLoading || cachedWorkspaceQuery.isLoading)) {
     return <LoadingState label="Loading workspace…" />;
   }
-  if (workspaceQuery.isError) {
+  if (!workspace && workspaceQuery.isError) {
     return <ErrorState error={workspaceQuery.error} onRetry={() => void workspaceQuery.refetch()} />;
   }
-  if (!workspaceQuery.data) {
+  if (!workspace) {
     return <ErrorState error={new Error("Workspace not found.")} />;
   }
 
-  const { workspace } = workspaceQuery.data;
-
   return (
     <section>
+      {workspaceQuery.isError ? (
+        <div className="offline-callout" role="status">
+          The server is unavailable. Showing the local workspace cache; note edits still save on
+          this device.
+        </div>
+      ) : null}
       <div className="breadcrumb"><NavLink to="/workspaces">Workspaces</NavLink><span>/</span></div>
       <header className="workspace-header">
         <div>
           <p className="eyebrow">{workspace.role} access</p>
           <h1>{workspace.name}</h1>
         </div>
-        <span className={`role-badge role-badge--${workspace.role}`}>{workspace.role}</span>
+        <div className="status-badges">
+          {(pendingChangesQuery.data ?? 0) > 0 ? (
+            <span className="unsynced-badge">
+              {pendingChangesQuery.data} unsynced
+            </span>
+          ) : null}
+          <span className={`role-badge role-badge--${workspace.role}`}>{workspace.role}</span>
+        </div>
       </header>
       <nav className="tabs" aria-label="Workspace navigation">
         <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>

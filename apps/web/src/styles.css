@@ -67,6 +67,8 @@ p { color: var(--muted); }
 .button--secondary { color: var(--text); background: transparent; border-color: var(--border); }
 .button--secondary:hover { border-color: #46665c; background: var(--panel-raised); }
 .button--quiet { min-height: 2.25rem; padding: 0.4rem 0.7rem; color: var(--muted); background: transparent; border-color: var(--border); }
+.button--danger { color: #ffd2d2; background: transparent; border-color: #743d3d; }
+.button--danger:hover:not(:disabled) { background: #261515; }
 .button--full { width: 100%; }
 
 .brand { display: inline-flex; align-items: center; gap: 0.65rem; color: var(--text); font-size: 1rem; font-weight: 700; text-decoration: none; }
@@ -136,6 +138,8 @@ summary { padding: 0.75rem 0; cursor: pointer; color: var(--muted); font-size: 0
 .role-badge--editor { border-color: #50637f; color: #a8c5ff; }
 .role-badge--viewer { color: #b7aaa0; }
 .version-badge { padding: 0.45rem 0.7rem; color: var(--accent); }
+.status-badges { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; }
+.unsynced-badge { display: inline-flex; align-items: center; padding: 0.3rem 0.55rem; border: 1px solid #806d38; border-radius: 999px; color: #f0d582; background: rgba(128, 109, 56, 0.12); font-family: "DM Mono", monospace; font-size: 0.65rem; text-transform: uppercase; white-space: nowrap; }
 
 .breadcrumb { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; color: var(--muted); font-size: 0.78rem; }
 .breadcrumb a { text-decoration: none; }
@@ -171,6 +175,9 @@ summary { padding: 0.75rem 0; cursor: pointer; color: var(--muted); font-size: 0
 .empty-state p { max-width: 26rem; margin: 0.4rem 0 0; font-size: 0.85rem; }
 
 .warning-callout { margin: 1rem 0; padding: 0.8rem; border-left: 2px solid #d4b66a; color: #d8cba8; background: #241f13; font-size: 0.8rem; }
+.info-callout, .offline-callout, .success-callout { margin: 1rem 0; padding: 0.8rem; border: 1px solid #315849; border-radius: 0.4rem; color: #b9d9ce; background: #10231d; font-size: 0.8rem; }
+.offline-callout { border-color: #806d38; color: #e2d3a8; background: #241f13; }
+.success-callout { margin: 0; color: var(--accent); }
 .note-list { display: flex; flex-direction: column; }
 .note-list a { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1rem; padding: 1.1rem 0.5rem; border-bottom: 1px solid var(--border); text-decoration: none; }
 .note-list a:hover h3 { color: var(--accent); }
@@ -180,6 +187,11 @@ summary { padding: 0.75rem 0; cursor: pointer; color: var(--muted); font-size: 0
 .note-id { color: var(--muted); }
 .back-link { color: var(--accent); font-size: 0.8rem; text-decoration: none; }
 .envelope-panel code { display: block; max-height: 10rem; overflow: auto; padding: 0.6rem; border-radius: 0.3rem; color: #b9e8d7; background: #09110f; word-break: break-all; }
+.note-editor textarea { min-height: 20rem; font-family: inherit; font-size: 0.95rem; line-height: 1.65; }
+.editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.read-only-message, .local-only-message { margin-bottom: 0; font-size: 0.82rem; }
+.cached-envelope { margin-top: 1rem; }
+.cached-envelope dl { margin-bottom: 0; padding: 0 0.75rem; }
 
 @media (max-width: 860px) {
   .auth-layout { grid-template-columns: 1fr; }

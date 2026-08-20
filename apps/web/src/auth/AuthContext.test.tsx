@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api } from "../api/client";
 import { AuthProvider, useAuth } from "./AuthContext";
+import { cacheOfflineUser } from "./offlineUserCache";
 
 const user = {
   createdAt: "2026-08-19T12:00:00.000Z",
@@ -24,6 +25,7 @@ function AuthHarness() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 describe("AuthProvider", () => {
@@ -46,5 +48,23 @@ describe("AuthProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(screen.getByText("Signed out")).toBeInTheDocument());
     expect(api.auth.logout).toHaveBeenCalledOnce();
+  });
+
+  it("uses the cached user identity when session verification is offline", async () => {
+    cacheOfflineUser(user);
+    vi.spyOn(api.auth, "me").mockRejectedValue(new TypeError("Failed to fetch"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <AuthHarness />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText(user.email)).toBeInTheDocument();
   });
 });
