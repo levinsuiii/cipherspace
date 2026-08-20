@@ -73,11 +73,13 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
-The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, encrypted note discussions, and manual conflict resolution. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflict history are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators. Comments use React Query and the authenticated API directly; they are not currently durable offline data or part of note push/pull sync.
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, encrypted note discussions, and manual conflict resolution. Workspaces, encrypted local note envelopes, cached encrypted versions, pending changes, sync cursors, retry state, and encrypted conflict snapshots are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators. Comments use React Query and the authenticated API directly; they are not currently durable offline data or part of note push/pull sync.
 
-The workspace UI now provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext.
+The workspace UI provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected key envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. Note creates, edits, and conflict resolutions are encrypted through `@cipherspace/crypto` before the local note and pending operation are committed, so sync reuses the durable ciphertext and never needs a plaintext queue payload.
 
-This v1 key is tied to the current user, workspace, and browser profile. There is no recovery or member/device key sharing yet. Titles and bodies remain plaintext in the browser profile's IndexedDB, including after logout, so workspace lock does not provide encrypted-at-rest local drafts.
+This v1 key is tied to the current user, workspace, and browser profile. There is no recovery or member/device key sharing yet. Titles and bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the unwrapped key from memory. Note IDs, workspace IDs, timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible in the browser profile.
+
+Opening a local or server-backed note decrypts its envelope only after the workspace is unlocked. Plaintext is held in React memory while displayed. Selecting **Save local change** creates a new encrypted local envelope and encrypted pending operation; it does not persist the title or body as plaintext. A locked workspace replaces titles with **Encrypted note**, clears editor values, and disables editing. A wrong workspace key produces a generic decryption error without exposing partial content. IndexedDB schema version 5 lazily encrypts older plaintext note, queue, and conflict payloads after the correct workspace key is unlocked.
 
 ## Manual frontend check
 
@@ -89,10 +91,11 @@ This v1 key is tied to the current user, workspace, and browser profile. There i
 6. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes and sync status `idle`.
 7. Select **Sync**. Confirm the status changes through `syncing` to `synced` and the unsynced count drops (normally to zero). The backend stores only ciphertext and metadata.
 8. Edit the note again and confirm the unsynced indicator returns. Select **Sync** again to push the next encrypted version.
-9. Reload the page. Confirm the workspace is `locked`, unlock it with the same local password, and verify another manual sync succeeds. This demonstrates that reload did not replace the workspace key.
-10. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
-11. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
-12. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
+9. Select **Lock** (or reload). Confirm note titles become **Encrypted note** and an open editor no longer shows title/body content. Unlock with the same local password and confirm the readable notes return.
+10. Open a note that exists on the server but has no local draft. Confirm it shows an unlock prompt while locked, then displays the decrypted title and body after unlock.
+11. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
+12. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
+13. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
 
 ## Manual comments check
 
@@ -140,7 +143,7 @@ await fetch(`/api/workspaces/${workspaceId}/notes/${noteId}/versions`, {
 8. Repeat steps 3–6 and select **Accept remote**. Confirm the explicitly selected remote content becomes the new local resolved draft, then sync it.
 9. Repeat steps 3–6, edit the title/body in **Manual merge**, and select **Save manual merge**. Confirm the merged draft becomes the single unsynced resolved change, then sync it.
 
-Conflict snapshots remain in IndexedDB as resolved history. The original conflicted queue entries are retired rather than silently retried, and every resolution is based on the selected remote version before it can be encrypted and pushed.
+Conflict snapshots remain in IndexedDB as encrypted resolved history. The original conflicted queue entries are retired rather than silently retried, and every selected resolution is encrypted locally before it becomes the one pending update based on the remote version.
 
 ## Authentication
 
@@ -331,5 +334,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

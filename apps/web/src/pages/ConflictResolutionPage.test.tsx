@@ -7,7 +7,16 @@ import { ConflictResolutionPage } from "./ConflictResolutionPage";
 
 const mocks = vi.hoisted(() => ({
   conflict: null as LocalConflict | null,
+  decryptLocal: vi.fn(async () => ({ body: "Local body", title: "Local title" })),
   decryptRemote: vi.fn(async () => ({ body: "Remote body", title: "Remote title" })),
+  encrypted: {
+    algorithm: "AES-GCM",
+    ciphertext: "encrypted",
+    envelopeVersion: 1,
+    keyVersion: 1,
+    nonce: "nonce"
+  },
+  encryptLocal: vi.fn(),
   getKey: vi.fn(async () => ({}) as CryptoKey),
   resolveConflict: vi.fn(async () => ({}))
 }));
@@ -26,6 +35,11 @@ vi.mock("../key-management/WorkspaceKeyContext", () => ({
 
 vi.mock("../sync/crypto", () => ({
   decryptCachedNoteVersion: mocks.decryptRemote
+}));
+
+vi.mock("../local-storage/notePayloadCrypto", () => ({
+  decryptLocalNotePayload: mocks.decryptLocal,
+  encryptLocalNotePayload: mocks.encryptLocal
 }));
 
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -79,6 +93,7 @@ function renderPage() {
 describe("ConflictResolutionPage", () => {
   beforeEach(() => {
     mocks.resolveConflict.mockClear();
+    mocks.encryptLocal.mockResolvedValue(mocks.encrypted);
     mocks.conflict = {
       base_version: localVersion("50000000-0000-4000-8000-000000000001", 1),
       base_version_id: "50000000-0000-4000-8000-000000000001",
@@ -94,6 +109,7 @@ describe("ConflictResolutionPage", () => {
       resolution: null,
       resolution_pending_change_id: null,
       resolved_at: null,
+      resolved_encrypted_payload: null,
       resolved_note_payload: null,
       status: "unresolved",
       user_id: "00000000-0000-4000-8000-000000000001",
@@ -105,15 +121,17 @@ describe("ConflictResolutionPage", () => {
 
   it("shows both versions and invokes keep-local and accept-remote actions", async () => {
     const first = renderPage();
-    expect(screen.getByText("Local title")).toBeInTheDocument();
+    expect(await screen.findByText("Local title")).toBeInTheDocument();
     expect(await screen.findByText("Remote title")).toBeInTheDocument();
     expect(screen.getByText("Base version")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Keep local" }));
     await waitFor(() =>
-      expect(mocks.resolveConflict).toHaveBeenCalledWith("conflict-id", {
-        action: "keep_local"
-      })
+      expect(mocks.resolveConflict).toHaveBeenCalledWith(
+        "conflict-id",
+        { action: "keep_local" },
+        mocks.encrypted
+      )
     );
     first.unmount();
 
@@ -122,10 +140,14 @@ describe("ConflictResolutionPage", () => {
     await screen.findByText("Remote title");
     fireEvent.click(screen.getByRole("button", { name: "Accept remote" }));
     await waitFor(() =>
-      expect(mocks.resolveConflict).toHaveBeenCalledWith("conflict-id", {
-        action: "accept_remote",
-        remote_payload: { body: "Remote body", title: "Remote title" }
-      })
+      expect(mocks.resolveConflict).toHaveBeenCalledWith(
+        "conflict-id",
+        {
+          action: "accept_remote",
+          remote_payload: { body: "Remote body", title: "Remote title" }
+        },
+        mocks.encrypted
+      )
     );
   });
 
@@ -137,10 +159,14 @@ describe("ConflictResolutionPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save manual merge" }));
 
     await waitFor(() =>
-      expect(mocks.resolveConflict).toHaveBeenCalledWith("conflict-id", {
-        action: "manual_merge",
-        merged_payload: { body: "Merged body", title: "Merged title" }
-      })
+      expect(mocks.resolveConflict).toHaveBeenCalledWith(
+        "conflict-id",
+        {
+          action: "manual_merge",
+          merged_payload: { body: "Merged body", title: "Merged title" }
+        },
+        mocks.encrypted
+      )
     );
   });
 });

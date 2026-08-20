@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
@@ -19,6 +19,7 @@ export function WorkspaceLayout() {
   const { workspaceId = "" } = useParams();
   const localData = useLocalData();
   const workspaceKey = useWorkspaceKey(workspaceId);
+  const [localEncryptionError, setLocalEncryptionError] = useState<string | null>(null);
   const syncEngine = useMemo(
     () => new NoteSyncEngine(localData, api.sync, { getWorkspaceKey: workspaceKey.getKey }),
     [localData, workspaceKey.getKey]
@@ -45,6 +46,24 @@ export function WorkspaceLayout() {
     },
     retry: false
   });
+
+  useEffect(() => {
+    let active = true;
+    setLocalEncryptionError(null);
+    if (!workspaceId || workspaceKey.status !== "unlocked") {
+      return () => { active = false; };
+    }
+    void workspaceKey.getKey()
+      .then((key) => localData.migratePlaintextWorkspace(workspaceId, key))
+      .catch(() => {
+        if (active) {
+          setLocalEncryptionError(
+            "Existing local note data could not be migrated to encrypted storage."
+          );
+        }
+      });
+    return () => { active = false; };
+  }, [localData, workspaceId, workspaceKey.getKey, workspaceKey.status]);
 
   const cachedWorkspace = cachedWorkspaceQuery.data;
   const workspace: Workspace | undefined = workspaceQuery.data?.workspace ??
@@ -112,6 +131,9 @@ export function WorkspaceLayout() {
         onUnlock={workspaceKey.unlock}
         pendingCount={pendingChangesQuery.data ?? 0}
       />
+      {localEncryptionError ? (
+        <div className="form-error" role="alert">{localEncryptionError}</div>
+      ) : null}
       <nav className="tabs" aria-label="Workspace navigation">
         <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>
         <NavLink to={`/workspaces/${workspace.id}/notes`}>Notes</NavLink>

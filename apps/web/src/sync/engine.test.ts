@@ -10,7 +10,9 @@ import type {
   SyncPushResponse
 } from "../api/types";
 import { CipherSpaceLocalDatabase } from "../local-storage/database";
+import { encryptLocalNotePayload } from "../local-storage/notePayloadCrypto";
 import { LocalNotesRepository } from "../local-storage/repository";
+import type { LocalNotePayload } from "../local-storage/types";
 import { NoteSyncEngine, type SyncTransport } from "./engine";
 
 const ids = {
@@ -70,8 +72,9 @@ describe("NoteSyncEngine", () => {
   let databaseName: string;
   let repository: LocalNotesRepository;
   let nextId: number;
+  let workspaceKey: CryptoKey;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     databaseName = `cipherspace-sync-test-${crypto.randomUUID()}`;
     database = new CipherSpaceLocalDatabase(databaseName);
     nextId = 0;
@@ -83,14 +86,31 @@ describe("NoteSyncEngine", () => {
       },
       now: () => "2026-08-20T12:00:00.000Z"
     });
+    workspaceKey = await generateWorkspaceKey();
   });
+
+  async function createLocal(payload: LocalNotePayload) {
+    return repository.createNote(
+      ids.workspace,
+      payload,
+      await encryptLocalNotePayload(payload, workspaceKey)
+    );
+  }
+
+  async function editLocal(noteId: string, payload: LocalNotePayload) {
+    return repository.editNote(
+      noteId,
+      payload,
+      await encryptLocalNotePayload(payload, workspaceKey)
+    );
+  }
 
   afterEach(async () => {
     await database.delete();
   });
 
   it("encrypts and pushes a pending change, marks it synced, and persists the pull cursor", async () => {
-    await repository.createNote(ids.workspace, {
+    await createLocal({
       body: "plaintext body must not cross the transport boundary",
       title: "Local draft"
     });
@@ -117,7 +137,6 @@ describe("NoteSyncEngine", () => {
         };
       })
     };
-    const workspaceKey = await generateWorkspaceKey();
     const engine = new NoteSyncEngine(repository, transport, {
       getWorkspaceKey: async () => workspaceKey
     });
@@ -150,7 +169,7 @@ describe("NoteSyncEngine", () => {
 
   it("stores a conflict with local, remote, and base snapshots without overwriting the draft", async () => {
     await repository.cacheServerNoteDetail(detail());
-    await repository.editNote(ids.note, {
+    await editLocal(ids.note, {
       body: "my unsynced edit",
       title: "My local title"
     });
@@ -183,20 +202,22 @@ describe("NoteSyncEngine", () => {
       }))
     };
     const engine = new NoteSyncEngine(repository, transport, {
-      getWorkspaceKey: generateWorkspaceKey
+      getWorkspaceKey: async () => workspaceKey
     });
 
     await expect(engine.syncWorkspace(ids.workspace)).resolves.toMatchObject({ conflicts: 1 });
     await expect(repository.getNote(ids.note)).resolves.toMatchObject({
       base_version_id: ids.version1,
-      local_note_payload: { body: "my unsynced edit", title: "My local title" }
+      local_encrypted_payload: expect.any(Object),
+      local_note_payload: null
     });
     const conflicts = await repository.listConflicts(ids.workspace);
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]).toMatchObject({
       base_version: { id: ids.version1 },
       base_version_id: ids.version1,
-      local_note_payload: { body: "my unsynced edit", title: "My local title" },
+      local_encrypted_payload: expect.any(Object),
+      local_note_payload: null,
       remote_version: { id: ids.version2 },
       status: "unresolved"
     });
@@ -206,11 +227,11 @@ describe("NoteSyncEngine", () => {
   });
 
   it("pushes dependent create and update operations in order with the accepted base", async () => {
-    const localNote = await repository.createNote(ids.workspace, {
+    const localNote = await createLocal({
       body: "first",
       title: "Offline note"
     });
-    await repository.editNote(localNote.id, { body: "second", title: "Offline note" });
+    await editLocal(localNote.id, { body: "second", title: "Offline note" });
     const observed: SyncPushChange[] = [];
     const transport: SyncTransport = {
       pull: vi.fn(async (): Promise<SyncPullResponse> => ({
@@ -240,7 +261,7 @@ describe("NoteSyncEngine", () => {
       })
     };
     const engine = new NoteSyncEngine(repository, transport, {
-      getWorkspaceKey: generateWorkspaceKey
+      getWorkspaceKey: async () => workspaceKey
     });
 
     await expect(engine.syncWorkspace(ids.workspace)).resolves.toMatchObject({ pushed: 2 });
@@ -250,13 +271,14 @@ describe("NoteSyncEngine", () => {
     ]);
     await expect(repository.getNote(ids.note)).resolves.toMatchObject({
       base_version_id: ids.version2,
-      local_note_payload: { body: "second", title: "Offline note" }
+      local_encrypted_payload: expect.any(Object),
+      local_note_payload: null
     });
     await expect(repository.listPendingChanges(ids.workspace)).resolves.toEqual([]);
   });
 
   it("marks a failed attempt for retry without advancing the cursor", async () => {
-    await repository.createNote(ids.workspace, { body: "offline", title: "Retry me" });
+    await createLocal({ body: "offline", title: "Retry me" });
     const transport: SyncTransport = {
       pull: vi.fn(),
       push: vi.fn(async () => {
@@ -264,7 +286,7 @@ describe("NoteSyncEngine", () => {
       })
     };
     const engine = new NoteSyncEngine(repository, transport, {
-      getWorkspaceKey: generateWorkspaceKey
+      getWorkspaceKey: async () => workspaceKey
     });
 
     await expect(engine.syncWorkspace(ids.workspace)).rejects.toThrow("network unavailable");
@@ -281,7 +303,7 @@ describe("NoteSyncEngine", () => {
 
   it("syncs a manually resolved conflict as a new version based on the remote version", async () => {
     await repository.cacheServerNoteDetail(detail());
-    await repository.editNote(ids.note, { body: "my edit", title: "Local" });
+    await editLocal(ids.note, { body: "my edit", title: "Local" });
     const remoteVersion = version(ids.version2, 2, ids.version1);
     const firstTransport: SyncTransport = {
       pull: vi.fn(async (): Promise<SyncPullResponse> => ({
@@ -300,7 +322,6 @@ describe("NoteSyncEngine", () => {
         workspaceId: ids.workspace
       }))
     };
-    const workspaceKey = await generateWorkspaceKey();
     const firstSync = new NoteSyncEngine(repository, firstTransport, {
       getWorkspaceKey: async () => workspaceKey
     });
@@ -350,7 +371,8 @@ describe("NoteSyncEngine", () => {
     await expect(repository.listPendingChanges(ids.workspace)).resolves.toEqual([]);
     await expect(repository.getNote(ids.note)).resolves.toMatchObject({
       base_version_id: version3.id,
-      local_note_payload: { body: "my edit", title: "Local" }
+      local_encrypted_payload: expect.any(Object),
+      local_note_payload: null
     });
   });
 });

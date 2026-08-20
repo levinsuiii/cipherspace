@@ -5,15 +5,23 @@ import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom
 import { api } from "../api/client";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import { CommentSection } from "../comments/CommentSection";
+import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
+import {
+  decryptLocalNotePayload,
+  encryptLocalNotePayload
+} from "../local-storage/notePayloadCrypto";
+import type { LocalNotePayload } from "../local-storage/types";
 import { queryKeys } from "../queryKeys";
+import { decryptCachedNoteVersion } from "../sync/crypto";
 import { formatDate, shortenOpaqueValue } from "../utils";
 
 export function NoteDetailPage() {
   const { workspace } = useOutletContext<WorkspaceOutletContext>();
   const { noteId = "" } = useParams();
   const localData = useLocalData();
+  const workspaceKey = useWorkspaceKey(workspace.id);
   const navigate = useNavigate();
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
@@ -21,6 +29,10 @@ export function NoteDetailPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [decryptedPayload, setDecryptedPayload] =
+    useState<LocalNotePayload | null>(null);
+  const [decryptError, setDecryptError] = useState<string | null>(null);
+  const [isDecrypting, setIsDecrypting] = useState(false);
   const localNoteQuery = useLocalQuery(
     () => localData.getNote(noteId),
     [localData, noteId]
@@ -50,13 +62,58 @@ export function NoteDetailPage() {
   const note = localNoteQuery.data;
   const latestVersion = versionQuery.data;
   const hasConflict = (conflictCountQuery.data ?? 0) > 0;
-  const canEdit = workspace.role !== "viewer" && !hasConflict;
+  const hasReadablePayload = Boolean(decryptedPayload);
+  const canEdit = workspace.role !== "viewer" && !hasConflict && hasReadablePayload &&
+    workspaceKey.status === "unlocked";
   const canDelete = workspace.role === "owner";
 
   useEffect(() => {
-    setTitle(note?.local_note_payload?.title ?? "");
-    setBody(note?.local_note_payload?.body ?? "");
-  }, [note?.id, note?.local_revision]);
+    let active = true;
+    setTitle("");
+    setBody("");
+    setDecryptedPayload(null);
+    setDecryptError(null);
+    setIsDecrypting(false);
+    if (!note || workspaceKey.status !== "unlocked") {
+      return () => { active = false; };
+    }
+
+    setIsDecrypting(true);
+    void workspaceKey.getKey()
+      .then(async (key) => {
+        if (note.local_encrypted_payload) {
+          return decryptLocalNotePayload(note.local_encrypted_payload, key);
+        }
+        if (note.local_note_payload) return note.local_note_payload;
+        if (latestVersion) return decryptCachedNoteVersion(latestVersion, key);
+        throw new Error("This note has no encrypted content to decrypt.");
+      })
+      .then((payload) => {
+        if (!active) return;
+        setDecryptedPayload(payload);
+        setTitle(payload.title);
+        setBody(payload.body);
+      })
+      .catch(() => {
+        if (active) {
+          setDecryptError(
+            "This note could not be decrypted. The workspace may be using a different key."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setIsDecrypting(false);
+      });
+
+    return () => { active = false; };
+  }, [
+    latestVersion?.id,
+    note?.id,
+    note?.local_revision,
+    note?.local_encrypted_payload,
+    workspaceKey.getKey,
+    workspaceKey.status
+  ]);
 
   if (!note && (localNoteQuery.isLoading || serverNoteQuery.isLoading || serverNoteQuery.isSuccess)) {
     return <LoadingState label="Loading local note…" />;
@@ -75,7 +132,10 @@ export function NoteDetailPage() {
     setSaveMessage(null);
     setIsSaving(true);
     try {
-      await localData.editNote(note.id, { body, title: trimmedTitle });
+      const payload = { body, title: trimmedTitle };
+      const key = await workspaceKey.getKey();
+      const encryptedPayload = await encryptLocalNotePayload(payload, key);
+      await localData.editNote(note.id, payload, encryptedPayload);
       setSaveMessage("Saved locally. This change is queued for sync.");
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the local note.");
@@ -96,8 +156,9 @@ export function NoteDetailPage() {
     }
   };
 
-  const displayTitle = note.local_note_payload?.title ??
-    shortenOpaqueValue(note.encrypted_title, "Encrypted note");
+  const displayTitle = workspaceKey.status === "unlocked"
+    ? decryptedPayload?.title ?? shortenOpaqueValue(note.encrypted_title, "Encrypted note")
+    : "Encrypted note";
 
   return (
     <section className="note-detail">
@@ -137,6 +198,22 @@ export function NoteDetailPage() {
         </div>
       ) : null}
 
+      {note.local_encrypted_payload || note.local_note_payload || latestVersion ? (
+        workspaceKey.status !== "unlocked" ? (
+          <div className="warning-callout" role="status">
+            This note is encrypted on this device. Unlock the workspace key above to read it.
+          </div>
+        ) : isDecrypting ? (
+          <div className="info-callout" role="status">Decrypting the note in memory…</div>
+        ) : decryptError ? (
+          <div className="form-error" role="alert">{decryptError}</div>
+        ) : decryptedPayload ? (
+          <div className="info-callout" role="status">
+            Decrypted in memory. Lock the workspace to clear the readable editor state.
+          </div>
+        ) : null
+      ) : null}
+
       <div className="detail-grid">
         <section className="panel">
           <form className="form-stack note-editor" onSubmit={(event) => void handleSave(event)}>
@@ -146,9 +223,9 @@ export function NoteDetailPage() {
                 disabled={!canEdit}
                 maxLength={200}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder={note.local_note_payload ? "Note title" : "Create a local draft title"}
+                placeholder={hasReadablePayload ? "Note title" : "Unlock to decrypt this note"}
                 required
-                value={title}
+                value={workspaceKey.status === "unlocked" ? title : ""}
               />
             </label>
             <label>
@@ -156,9 +233,9 @@ export function NoteDetailPage() {
               <textarea
                 disabled={!canEdit}
                 onChange={(event) => setBody(event.target.value)}
-                placeholder={note.local_note_payload ? "Write locally…" : "No decrypted local draft exists yet."}
+                placeholder={hasReadablePayload ? "Write locally…" : "Unlock to decrypt this note."}
                 rows={18}
-                value={body}
+                value={workspaceKey.status === "unlocked" ? body : ""}
               />
             </label>
             {saveError ? <div className="form-error" role="alert">{saveError}</div> : null}
@@ -186,8 +263,10 @@ export function NoteDetailPage() {
               >
                 Resolve conflict
               </Link>
-            ) : (
+            ) : workspace.role === "viewer" ? (
               <p className="read-only-message">Viewer access is read-only.</p>
+            ) : (
+              <p className="read-only-message">Unlock and decrypt this note before editing it.</p>
             )}
           </form>
         </section>

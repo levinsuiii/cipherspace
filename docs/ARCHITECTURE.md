@@ -144,11 +144,13 @@ Local development uses Vite's same-origin `/api` proxy. The Docker web container
 
 The note UI now creates, edits, and soft-deletes local notes without waiting for the API. Successful API reads refresh workspace, note metadata, and latest-version envelope caches. When the API is unavailable, cached workspace and note screens remain usable and every local mutation is committed atomically with its pending change. The browser caches the last verified user profile, but never the HTTP-only session token, so user-scoped local data can be reopened during a network outage.
 
-Conflicted notes open a dedicated manual resolution route. It compares the preserved local snapshot with the remote envelope decrypted by the unlocked client, shows available base/remote metadata, and supports keep-local, accept-remote, or user-edited merge content. Resolution is one local transaction that preserves the conflict record, retires divergent pending operations, and creates a single update based on the selected remote version for the existing encrypted sync path.
+The detail page decrypts a local envelope, or the latest cached server envelope when no local envelope exists, only after the workspace key is unlocked. Plaintext exists in React memory while displayed. Owners and editors save by encrypting a fresh envelope before the note and pending operation are committed atomically. Local unsynced envelopes always take precedence over cached server versions.
 
-The client sync domain now prepares encrypted pending operations through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and explicit conflict snapshots remain in IndexedDB. A workspace-level React provider supplies the engine with an unlocked in-memory key, and the workspace UI exposes explicit key creation/unlock plus manual sync.
+Conflicted notes open a dedicated manual resolution route. It decrypts both preserved local and remote envelopes in the unlocked client, shows available base/remote metadata, and supports keep-local, accept-remote, or user-edited merge content. The selected result is encrypted before one local transaction preserves encrypted resolution history, retires divergent pending operations, and creates a single encrypted update based on the selected remote version.
 
-Local editor payloads intentionally remain plaintext structured-clone values in v1. Pending payloads must pass through `@cipherspace/crypto` before upload; the queue is never an authorization to send plaintext to the backend. Protecting the workspace key does not provide encrypted-at-rest local drafts.
+The client note-mutation boundary prepares encrypted note and pending-operation envelopes through `@cipherspace/crypto`. The sync domain pushes those durable envelopes in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and encrypted conflict snapshots remain in IndexedDB. A workspace-level React provider supplies the UI with an unlocked in-memory key, and the workspace UI exposes explicit key creation/unlock plus manual sync.
+
+Local title/body payloads exist transiently in component memory and method arguments, but the durable note, pending-change, conflict, and resolved-conflict content fields use the existing version 1 AES-GCM note envelope. A compatibility migration encrypts older plaintext records after successful unlock, then clears their plaintext fields. Locked UI renders placeholders rather than retained component plaintext.
 
 ## Implemented Client Crypto Package
 
@@ -166,7 +168,7 @@ The implemented v1 primitives are:
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
 
-The package envelope is intentionally transport-independent. The later frontend integration will map its `ciphertext` and `nonce` fields into the existing API's `encryptedContent` and `contentNonce` fields and provide a key-management identifier for `encryptionMetadata.keyId`; the backend contract is unchanged in this slice.
+The package envelope is intentionally transport-independent. The frontend maps its `ciphertext` and `nonce` fields into the API's `encryptedContent` and `contentNonce` fields and supplies the fixed version 1 key identifier in `encryptionMetadata.keyId`; local IndexedDB records retain the package envelope directly.
 
 The v1 local unlock password is separate from the account password and is never stored or sent to the backend. It derives only a wrapping key; it is not used directly as note key material. There is no recovery, parameter migration, multi-device transfer, or member key-sharing flow yet. Losing the password or browser profile can make server ciphertext unavailable to this client.
 
@@ -194,17 +196,19 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 
 ## Implemented Local Storage
 
-`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 4 contains:
+`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 5 contains:
 
 - `workspaces`: workspace metadata and the current user's cached role.
-- `notes`: stable note identity, local title/body payload, tombstone, local revision, base version, and server-visible note metadata.
+- `notes`: stable note identity, encrypted local title/body envelope, tombstone, local revision, base version, and server-visible note metadata.
 - `note_versions`: cached immutable encrypted server envelopes and their version metadata.
-- `pending_changes`: durable `create_note`, `update_note`, and `delete_note` mutations.
+- `pending_changes`: durable `create_note`, `update_note`, and `delete_note` mutations; create/update content is an encrypted note envelope and deletes have no content.
 - `local_sync_metadata`: per-workspace client ID, opaque pull cursor, last-successful-sync timestamp, and last sync error.
-- `conflicts`: local/base/remote snapshots created by push or pull conflict detection, plus durable resolution status, action, timestamp, selected payload, and replacement pending-operation ID.
+- `conflicts`: encrypted local and remote snapshots created by push or pull conflict detection, plus durable resolution status, action, timestamp, encrypted selected payload, and replacement pending-operation ID.
 - `workspace_keys`: one user/workspace-scoped protected-key envelope containing only ciphertext, KDF parameters, salt, nonce, and authenticated format metadata.
 
-Note mutations and their pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest payload, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
+Create/edit content is encrypted with a fresh nonce before note mutations and pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest encrypted envelope, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
+
+Schema version 5 is additive: its structural upgrade initializes encrypted local fields but deliberately does not transform content, because the protected workspace key is unavailable to Dexie during database open. After a successful workspace unlock, the repository encrypts legacy plaintext notes, pending changes, and conflict/resolution snapshots, verifies that their revisions still match, and atomically clears the corresponding plaintext fields.
 
 API reads and sync pulls populate caches but do not overwrite an unsynced local payload or tombstone. The UI observes Dexie queries and surfaces per-note and per-workspace unsynced and conflict counts. Queue attempts persist `pending`, `syncing`, `failed`, `conflict`, `resolved`, or `synced` state with attempt timestamps and errors. `resolved` is a local terminal audit state; only `synced` means the server accepted that exact operation.
 
@@ -215,7 +219,7 @@ Sensitive local storage rules:
 - Avoid logging decrypted note content.
 - Prefer keeping unwrapped workspace keys in memory only after unlock.
 - If persisted key material is needed, store only wrapped keys and document the risk.
-- Local plaintext drafts remain in the browser profile after logout and must be treated as device-local sensitive data; locking the workspace clears the in-memory key but does not encrypt or erase drafts.
+- Local ciphertext and visible operational metadata remain in the browser profile after logout. Locking clears the in-memory key and readable UI state but does not erase ciphertext.
 
 ## Architecture Decisions
 
@@ -236,8 +240,10 @@ Sensitive local storage rules:
 - For the local-only v1 unlock model, persist a versioned AES-GCM-protected workspace key in user-scoped IndexedDB. Derive its wrapping key with PBKDF2-HMAC-SHA-256, a random 128-bit salt, and 600,000 iterations; bind the user and workspace identifiers through authenticated additional data.
 - Require an explicit local unlock password after reload and expose manual sync only while the workspace key is unlocked. Do not reuse the account password or send protection material to the backend.
 - Scope IndexedDB records by user ID and commit local note state and its pending mutation atomically.
+- Encrypt local create/edit and conflict-resolution content before committing it to IndexedDB; reuse the resulting envelope for sync.
 - Treat the local database as the editing source of truth; sync transport reads durable pending operations rather than submitting directly from editor forms.
 - Use workspace-scoped sync routes, client operation UUIDs plus request fingerprints for idempotency, and opaque sequence cursors for resumable pulls.
 - Push dependent operations sequentially so a locally created note can receive a server base before later updates or deletion are submitted.
 - Commit each pulled page and its new cursor atomically; represent divergent base versions as unresolved local conflicts without overwriting drafts.
 - Resolve note-edit conflicts locally and explicitly. Preserve both snapshots, rebase exactly one chosen result to the latest cached remote version, and let normal encrypted sync create the immutable server version.
+- Decrypt local or server-backed note envelopes only while the workspace key is unlocked. Keep plaintext in UI memory, render placeholders immediately on lock, and encrypt every saved change before persistence.

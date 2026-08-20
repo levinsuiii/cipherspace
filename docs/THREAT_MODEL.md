@@ -10,9 +10,11 @@ Note and comment routes validate and store opaque base64 ciphertext, nonces, and
 
 Comments use direct authenticated API calls and are not queued in IndexedDB or included in note sync. A draft exists only in React state until submission. Soft-deleting a comment clears its ciphertext, nonce, and encryption metadata in PostgreSQL while retaining authorship, parent linkage, and timestamps for a safe discussion placeholder. Previously downloaded ciphertext or plaintext cannot be revoked from a member or compromised device.
 
-The sync engine is connected to these primitives: when the local key provider supplies an unlocked workspace `CryptoKey`, it serializes the local title/body snapshot, encrypts it through `@cipherspace/crypto`, persists the encrypted prepared operation, and only then constructs a push request. It never falls back to uploading the plaintext draft. The React UI can invoke this engine manually while unlocked.
+The local note mutation boundary uses these primitives: when the key provider supplies an unlocked workspace `CryptoKey`, it serializes the title/body snapshot, encrypts it through `@cipherspace/crypto`, and atomically persists the same envelope in the local note and pending operation. The sync engine constructs requests only from durable encrypted envelopes and never receives or uploads a plaintext draft. The React UI can invoke sync manually while unlocked.
 
-The local-only v1 key flow generates one random workspace key, protects it under a separate local unlock password, and persists only the protected envelope in user-scoped IndexedDB. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key; wrapping uses a fresh 96-bit nonce and binds the format, user ID, and workspace ID as authenticated additional data. The password and raw/unwrapped key are not persisted or sent to the backend, and the unwrapped `CryptoKey` exists only in browser memory while unlocked. The local-first editor still stores user-scoped plaintext title/body drafts in IndexedDB. Member/device key sharing, recovery, rotation, revocation, lock timeout, and encrypted local drafts remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
+The local-only v1 key flow generates one random workspace key, protects it under a separate local unlock password, and persists only the protected key envelope in user-scoped IndexedDB. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key; wrapping uses a fresh 96-bit nonce and binds the format, user ID, and workspace ID as authenticated additional data. The password and raw/unwrapped key are not persisted or sent to the backend, and the unwrapped `CryptoKey` exists only in browser memory while unlocked. Local note, pending-change, conflict, and resolved-conflict content uses the existing authenticated note envelope in IndexedDB. Member/device key sharing, recovery, rotation, revocation, and lock timeout remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
+
+The note list, detail editor, and conflict view decrypt stored envelopes only while the workspace is unlocked. Resulting title/body values remain in React memory while displayed. Locking immediately renders placeholders/empty editor values and removes the unwrapped key; saving encrypts before persistence. This does not protect content from same-origin scripts, browser extensions, screenshots, memory inspection, or device compromise while unlocked.
 
 The browser stores the last successfully verified user profile in local storage so the matching IndexedDB scope can be reopened when session verification fails because the network is unavailable. It does not store the HTTP-only session token. An explicit 401 response or successful logout clears this profile cache. This offline identity is a local routing/data-selection convenience, not proof of current server authorization.
 
@@ -201,7 +203,7 @@ Compromised user device:
 
 - Out of scope for strong protection once the user unlocks content.
 - Avoid sensitive logs and scope local records by user ID.
-- Residual risk: local note title/body drafts and pending payloads are currently plaintext in IndexedDB and remain after logout until browser data is cleared. Anyone who can access the browser profile, execute same-origin code, or compromise the device may read them.
+- Residual risk: encrypted notes, queue/conflict metadata, ciphertext sizes, and the password-protected key envelope remain in IndexedDB after logout. Browser-profile compromise enables offline guessing of the local unlock password and exposes content if the attacker can unlock it or execute code while the legitimate workspace is unlocked.
 - The protected workspace-key envelope permits offline password guessing after browser-profile compromise. The 600,000-iteration PBKDF2 cost slows guesses but cannot compensate for a weak unlock password.
 
 Lost password:
@@ -218,7 +220,7 @@ Conflict overwrite:
 
 - Mitigate with server-side base-version comparison under a note lock, client-side pull checks, durable local/base/remote snapshots, and explicit manual resolution.
 - Keep-local, accept-remote, and manual-merge choices create a new operation based on the selected remote version; none bypass the normal server stale-base check.
-- Residual risk: resolution is device-local, local and resolved payloads are plaintext in IndexedDB, delete conflicts do not yet have a dedicated resolution flow, and there is no automatic semantic merge.
+- Residual risk: resolution is device-local, delete conflicts do not yet have a dedicated resolution flow, and there is no automatic semantic merge. Resolved ciphertext and resolution metadata remain on the device.
 
 ## Security Limitations
 
@@ -235,11 +237,12 @@ Conflict overwrite:
 - The local unlock password is independent of the account password. Creating a separate key in another browser or for another member does not grant access to ciphertext produced with the original key.
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
 - Comment envelope version 1 distinguishes comments from notes but does not bind ciphertext to a workspace ID, note ID, comment ID, parent ID, or author. A valid comment envelope can be replayed or swapped between comments using the same workspace key.
-- Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
+- Local note content is encrypted at rest with the workspace key, but note/workspace IDs, timestamps, revisions, statuses, ciphertext sizes, and other operational metadata are not hidden. This is browser-profile encryption, not hardware-backed storage or protection against code running in the unlocked origin.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
 - Comment drafts are not durable offline, and comments have no retry queue, version history, conflict detection, or sync protocol. A failed request requires the user to retry while the in-memory draft remains mounted.
-- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, unresolved and resolved conflict metadata, the selected resolved plaintext payload, and a password-protected workspace-key envelope in the browser profile. It does not persist the raw workspace key or unlock password.
+- The client stores encrypted local and remote snapshots, encrypted pending and resolved payloads, retry errors, cursors, unresolved/resolved conflict metadata, and a password-protected workspace-key envelope in the browser profile. It does not persist note plaintext, the raw workspace key, or the unlock password during normal version 5 operation.
+- Existing version 1–4 browser databases may contain legacy plaintext until that workspace is successfully unlocked. Version 5 performs a key-dependent lazy migration after unlock, encrypts matching note/queue/conflict records, and clears their plaintext fields. Losing the original key/password before this migration prevents safe automatic conversion; a Dexie schema upgrade alone cannot encrypt because it has no workspace key.
 
 ## Documentation Requirements For Future Changes
 

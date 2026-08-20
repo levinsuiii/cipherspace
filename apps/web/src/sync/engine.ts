@@ -59,14 +59,14 @@ export class NoteSyncEngine {
   }
 
   private async runSync(workspaceId: string): Promise<SyncSummary> {
+    const workspaceKey = await this.options.getWorkspaceKey(workspaceId);
+    await this.localData.migratePlaintextWorkspace(workspaceId, workspaceKey);
     const metadata = await this.localData.getSyncMetadata(workspaceId);
     const retryable = await this.localData.listRetryableChanges(workspaceId);
-    let workspaceKey: CryptoKey | undefined;
 
     for (const change of retryable) {
       if (change.operation_type === "delete_note" || change.encrypted_payload) continue;
       try {
-        workspaceKey ??= await this.options.getWorkspaceKey(workspaceId);
         const encrypted = await encryptPendingNoteChange(change, workspaceKey);
         await this.localData.storeEncryptedPayload(change.id, change.local_revision, encrypted);
       } catch (error) {

@@ -9,10 +9,12 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - The frontend includes login and registration pages, HTTP-only cookie session bootstrap/logout, protected routing, a responsive authenticated layout, and basic navigation.
 - Authenticated users can list and create workspaces, open workspace details, and view the backend-supported member directory with role labels.
 - Workspace note pages list the durable local cache, show explicit loading/error/empty/offline states, and expose cached encrypted server-version metadata separately from the local editor payload.
+- Local and server-backed note envelopes are decrypted only after workspace unlock and displayed from memory. Locking immediately replaces list/detail titles with an encrypted placeholder, clears rendered editor values, and disables editing; wrong-key states expose no partial plaintext.
+- Selecting **Save local change** encrypts the current title/body with a fresh nonce before atomically storing the local note and pending update. New note, queue, conflict, and resolved-conflict records persist ciphertext rather than plaintext.
 - Owners and editors can create and edit local notes; owners can add local tombstones. Viewers remain read-only. These local actions do not call the direct encrypted-note API.
 - The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
 - Frontend tests verify cookie credential handling, structured error propagation, and live auth-state cleanup on logout.
-- `apps/web/src/local-storage` implements a user-scoped Dexie/IndexedDB database for workspace metadata, notes and local drafts, cached encrypted versions, pending changes, per-workspace sync metadata, and unresolved/resolved conflict history.
+- `apps/web/src/local-storage` implements a user-scoped Dexie/IndexedDB database for workspace metadata, encrypted local note envelopes, cached encrypted versions, encrypted pending changes, per-workspace sync metadata, and encrypted unresolved/resolved conflict history.
 - Owners and editors can create and edit notes locally without an API mutation. Owners can soft-delete local notes. Every mutation atomically persists the note and a pending `create_note`, `update_note`, or `delete_note` record before the UI reports success.
 - Local notes, tombstones, local revisions, and pending changes survive browser reloads. Repeated edits coalesce into the existing pending update operation.
 - Workspace and note pages use the local database as their durable display source and refresh caches from successful API reads. Cached pages remain editable when those API reads fail.
@@ -20,11 +22,11 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Conflict badges open a dedicated resolution view showing the preserved local snapshot, the client-decrypted remote snapshot, and remote/base version metadata.
 - Keep-local, accept-remote, and manual-merge actions atomically preserve resolution history, retire conflicting queue entries, rebase one new local version to the remote version, and leave it pending for encrypted sync.
 - Editing is paused on an unresolved note conflict so users choose a resolution before creating more ordinary edits. Sync status reports `conflict` until the unresolved count clears.
-- A typed client sync engine encrypts queued create/update snapshots through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated remote pages, persists opaque cursors, and safely records failures.
+- Note mutations encrypt create/update snapshots through `@cipherspace/crypto` before IndexedDB persistence. The typed sync engine pushes those durable encrypted envelopes in order, pulls validated remote pages, persists opaque cursors, and safely records failures; a compatibility path can prepare legacy plaintext queue records during migration.
 - The workspace UI creates a random workspace key, protects it locally under a separate unlock password, unlocks it after reload, and supplies the in-memory key to the sync engine.
 - An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`. Dexie live queries update unsynced and conflict counts after sync or resolution state transitions.
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
-- Local storage tests use `fake-indexeddb` and cover creation, editing, pending change representation, database reopen/reload durability, tombstone deletion, protected-key persistence, and unlock after database reopen.
+- Local storage tests use `fake-indexeddb` and cover encrypted creation/editing, absence of plaintext in note and queue records, legacy plaintext migration after unlock, database reopen/reload durability, tombstone deletion, protected-key persistence, and unlock after database reopen.
 - `GET /health` checks PostgreSQL connectivity and returns `200` when the database is reachable or `503` when it is unavailable.
 - PostgreSQL access uses a small `pg` connection-pool adapter.
 - An ordered SQL migration runner records migration filenames and checksums in `schema_migrations`.
@@ -145,8 +147,8 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 ## Known Limitations
 
 - Initial authentication still requires the API. After a user has been verified once, the cached profile can reopen that user's local workspace/note data during an outage; this does not establish server authorization.
-- Local note titles and bodies are plaintext in the browser's IndexedDB and remain after logout. Workspace lock protects only the persisted content key; it does not encrypt drafts or provide local-data cleanup.
-- The sync engine encrypts pending payloads through `@cipherspace/crypto`, and the manual workspace action invokes it only while the local key is unlocked.
+- Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
+- Workspace lock removes the unwrapped key from memory and hides readable note UI state. There is no automatic timeout, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
@@ -154,13 +156,14 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
 - The protected key is available only in the browser profile where it was created. There is no recovery, multi-user/device key sharing, account-password integration, parameter migration, rotation, revocation, or cryptographic deletion. Losing the local unlock password or browser data can make remote ciphertext unrecoverable.
+- Server-backed note viewing succeeds only when the browser has the same workspace key that encrypted the note. A separately created key in another browser cannot decrypt the envelope.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - Server change events and idempotency outcomes are durable. Pull cursors and conflict records are device-local in IndexedDB rather than server cursor/conflict tables.
 - Pending invitations, email delivery, offline comment sync, delete-conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
 - Comment bodies are encrypted before transport, but comment IDs, note/workspace links, authors, parent links, timestamps, deletion state, ciphertext sizes, and discussion activity remain server-visible metadata. Comments are not cached in IndexedDB and cannot be created or read offline.
-- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds resolved status, action, timestamp, payload, and replacement-operation metadata while retaining the original conflict snapshots.
+- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds conflict-resolution metadata; version 5 adds encrypted local/resolved payload fields. Legacy plaintext note, queue, and conflict payloads are encrypted and cleared lazily after a successful workspace unlock because a Dexie schema upgrade cannot access the in-memory workspace key.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
-- Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
+- Authentication and local encryption have automated behavior coverage but have not received an independent security or cryptographic review. Multi-device/member key provisioning and stronger collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

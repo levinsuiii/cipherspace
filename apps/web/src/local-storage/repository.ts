@@ -6,7 +6,9 @@ import type {
   SyncPushResult,
   Workspace
 } from "../api/types";
+import type { EncryptedNotePayload } from "@cipherspace/crypto";
 import type { CipherSpaceLocalDatabase } from "./database";
+import { encryptLocalNotePayload } from "./notePayloadCrypto";
 import type {
   ConflictResolutionInput,
   LocalConflict,
@@ -34,6 +36,10 @@ function scopedKey(userId: string, id: string): string {
 
 function isOutstandingChange(change: PendingChange): boolean {
   return change.status !== "resolved" && change.status !== "synced";
+}
+
+function samePayload(left: LocalNotePayload | null, right: LocalNotePayload): boolean {
+  return left?.body === right.body && left.title === right.title;
 }
 
 export class LocalNotesRepository {
@@ -128,7 +134,11 @@ export class LocalNotesRepository {
     );
   }
 
-  public async createNote(workspaceId: string, payload: LocalNotePayload): Promise<LocalNote> {
+  public async createNote(
+    workspaceId: string,
+    payload: LocalNotePayload,
+    encryptedPayload: EncryptedNotePayload
+  ): Promise<LocalNote> {
     this.validateLocalPayload(payload);
     const timestamp = this.now();
     const noteId = this.createId();
@@ -141,7 +151,8 @@ export class LocalNotesRepository {
       encrypted_title_nonce: null,
       id: noteId,
       key: scopedKey(this.userId, noteId),
-      local_note_payload: { ...payload },
+      local_encrypted_payload: encryptedPayload,
+      local_note_payload: null,
       local_revision: 1,
       server_updated_at: null,
       updated_at: timestamp,
@@ -157,7 +168,7 @@ export class LocalNotesRepository {
       async () => {
         await this.database.notes.add(note);
         await this.database.pending_changes.add(
-          this.newPendingChange("create_note", note, payload, timestamp)
+          this.newPendingChange("create_note", note, encryptedPayload, timestamp)
         );
         await this.ensureSyncMetadata(workspaceId, timestamp);
       }
@@ -166,7 +177,11 @@ export class LocalNotesRepository {
     return note;
   }
 
-  public async editNote(noteId: string, payload: LocalNotePayload): Promise<LocalNote> {
+  public async editNote(
+    noteId: string,
+    payload: LocalNotePayload,
+    encryptedPayload: EncryptedNotePayload
+  ): Promise<LocalNote> {
     this.validateLocalPayload(payload);
     return this.database.transaction(
       "rw",
@@ -177,12 +192,13 @@ export class LocalNotesRepository {
         const timestamp = this.now();
         const updatedNote: LocalNote = {
           ...note,
-          local_note_payload: { ...payload },
+          local_encrypted_payload: encryptedPayload,
+          local_note_payload: null,
           local_revision: note.local_revision + 1,
           updated_at: timestamp
         };
         await this.database.notes.put(updatedNote);
-        await this.upsertPendingChange("update_note", updatedNote, payload, timestamp);
+        await this.upsertPendingChange("update_note", updatedNote, encryptedPayload, timestamp);
         return updatedNote;
       }
     );
@@ -221,6 +237,123 @@ export class LocalNotesRepository {
     return notes
       .filter((note) => note.deleted_at === null)
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+  }
+
+  public async migratePlaintextWorkspace(
+    workspaceId: string,
+    workspaceKey: CryptoKey
+  ): Promise<number> {
+    const [notes, changes, conflicts] = await Promise.all([
+      this.database.notes
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray(),
+      this.database.pending_changes
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray(),
+      this.database.conflicts
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray()
+    ]);
+
+    const notePlans = await Promise.all(
+      notes.filter((note) => note.local_note_payload).map(async (note) => ({
+        encrypted: note.local_encrypted_payload ??
+          await encryptLocalNotePayload(note.local_note_payload!, workspaceKey),
+        key: note.key,
+        payload: note.local_note_payload!,
+        revision: note.local_revision
+      }))
+    );
+    const changePlans = await Promise.all(
+      changes.filter((change) => change.local_note_payload).map(async (change) => ({
+        encrypted: change.encrypted_payload ??
+          await encryptLocalNotePayload(change.local_note_payload!, workspaceKey),
+        id: change.id,
+        payload: change.local_note_payload!,
+        revision: change.local_revision
+      }))
+    );
+    const conflictPlans = await Promise.all(
+      conflicts.filter(
+        (conflict) => conflict.local_note_payload || conflict.resolved_note_payload
+      ).map(async (conflict) => ({
+        key: conflict.key,
+        localEncrypted: conflict.local_note_payload
+          ? conflict.local_encrypted_payload ??
+            await encryptLocalNotePayload(conflict.local_note_payload, workspaceKey)
+          : conflict.local_encrypted_payload,
+        localPayload: conflict.local_note_payload,
+        resolvedEncrypted: conflict.resolved_note_payload
+          ? conflict.resolved_encrypted_payload ??
+            await encryptLocalNotePayload(conflict.resolved_note_payload, workspaceKey)
+          : conflict.resolved_encrypted_payload,
+        resolvedPayload: conflict.resolved_note_payload
+      }))
+    );
+
+    let migrated = 0;
+    await this.database.transaction(
+      "rw",
+      this.database.notes,
+      this.database.pending_changes,
+      this.database.conflicts,
+      async () => {
+        for (const plan of notePlans) {
+          const current = await this.database.notes.get(plan.key);
+          if (
+            current?.user_id !== this.userId ||
+            current.workspace_id !== workspaceId ||
+            current.local_revision !== plan.revision ||
+            !samePayload(current.local_note_payload, plan.payload)
+          ) continue;
+          await this.database.notes.put({
+            ...current,
+            local_encrypted_payload: current.local_encrypted_payload ?? plan.encrypted,
+            local_note_payload: null
+          });
+          migrated += 1;
+        }
+        for (const plan of changePlans) {
+          const current = await this.database.pending_changes.get(plan.id);
+          if (
+            current?.user_id !== this.userId ||
+            current.workspace_id !== workspaceId ||
+            current.local_revision !== plan.revision ||
+            !samePayload(current.local_note_payload, plan.payload)
+          ) continue;
+          await this.database.pending_changes.put({
+            ...current,
+            encrypted_payload: current.encrypted_payload ?? plan.encrypted,
+            local_note_payload: null
+          });
+          migrated += 1;
+        }
+        for (const plan of conflictPlans) {
+          const current = await this.database.conflicts.get(plan.key);
+          if (current?.user_id !== this.userId || current.workspace_id !== workspaceId) continue;
+          const localMatches = plan.localPayload
+            ? samePayload(current.local_note_payload, plan.localPayload)
+            : current.local_note_payload === null;
+          const resolvedMatches = plan.resolvedPayload
+            ? samePayload(current.resolved_note_payload, plan.resolvedPayload)
+            : current.resolved_note_payload === null;
+          if (!localMatches || !resolvedMatches) continue;
+          await this.database.conflicts.put({
+            ...current,
+            local_encrypted_payload: current.local_encrypted_payload ?? plan.localEncrypted,
+            local_note_payload: null,
+            resolved_encrypted_payload:
+              current.resolved_encrypted_payload ?? plan.resolvedEncrypted,
+            resolved_note_payload: null
+          });
+          migrated += 1;
+        }
+      }
+    );
+    return migrated;
   }
 
   public async getLatestVersion(noteId: string): Promise<LocalNoteVersion | undefined> {
@@ -281,6 +414,7 @@ export class LocalNotesRepository {
       await this.database.pending_changes.put({
         ...change,
         encrypted_payload: encryptedPayload,
+        local_note_payload: null,
         updated_at: this.now()
       });
       return true;
@@ -541,7 +675,8 @@ export class LocalNotesRepository {
 
   public async resolveConflict(
     conflictId: string,
-    resolution: ConflictResolutionInput
+    resolution: ConflictResolutionInput,
+    encryptedResolution?: EncryptedNotePayload
   ): Promise<PendingChange> {
     return this.database.transaction(
       "rw",
@@ -566,14 +701,17 @@ export class LocalNotesRepository {
         }
 
         const resolvedPayload = resolution.action === "keep_local"
-          ? note.local_note_payload ?? conflict.local_note_payload
+          ? null
           : resolution.action === "accept_remote"
             ? resolution.remote_payload
             : resolution.merged_payload;
-        if (!resolvedPayload) {
-          throw new Error("This conflict does not contain editable local note content.");
+        if (resolvedPayload) this.validateLocalPayload(resolvedPayload);
+        const resolvedEncryptedPayload = resolution.action === "keep_local"
+          ? note.local_encrypted_payload ?? conflict.local_encrypted_payload ?? encryptedResolution
+          : encryptedResolution;
+        if (!resolvedEncryptedPayload) {
+          throw new Error("This conflict does not contain encrypted local note content.");
         }
-        this.validateLocalPayload(resolvedPayload);
 
         const timestamp = this.now();
         const pending = await this.database.pending_changes
@@ -588,7 +726,8 @@ export class LocalNotesRepository {
           ...note,
           base_version_id: conflict.remote_version.id,
           deleted_at: null,
-          local_note_payload: { ...resolvedPayload },
+          local_encrypted_payload: resolvedEncryptedPayload,
+          local_note_payload: null,
           local_revision: nextRevision,
           updated_at: timestamp
         };
@@ -607,7 +746,7 @@ export class LocalNotesRepository {
         const resolvedChange = this.newPendingChange(
           "update_note",
           resolvedNote,
-          resolvedPayload,
+          resolvedEncryptedPayload,
           timestamp
         );
         await this.database.pending_changes.add(resolvedChange);
@@ -623,7 +762,8 @@ export class LocalNotesRepository {
             resolution: resolution.action,
             resolution_pending_change_id: resolvedChange.id,
             resolved_at: timestamp,
-            resolved_note_payload: { ...resolvedPayload },
+            resolved_encrypted_payload: resolvedEncryptedPayload,
+            resolved_note_payload: null,
             status: "resolved"
           });
         }
@@ -674,6 +814,7 @@ export class LocalNotesRepository {
       encrypted_title_nonce: note.encryptedTitleNonce,
       id: note.id,
       key,
+      local_encrypted_payload: existing?.local_encrypted_payload ?? null,
       local_note_payload: existing?.local_note_payload ?? null,
       local_revision: existing?.local_revision ?? 0,
       server_updated_at: note.updatedAt,
@@ -704,18 +845,18 @@ export class LocalNotesRepository {
   private newPendingChange(
     operationType: PendingChangeOperation,
     note: LocalNote,
-    payload: LocalNotePayload | null,
+    encryptedPayload: EncryptedNotePayload | null,
     timestamp: string
   ): PendingChange {
     return {
       attempt_count: 0,
       base_version_id: note.base_version_id,
       created_at: timestamp,
-      encrypted_payload: null,
+      encrypted_payload: encryptedPayload,
       id: this.createId(),
       last_attempt_at: null,
       last_error: null,
-      local_note_payload: payload ? { ...payload } : null,
+      local_note_payload: null,
       local_revision: note.local_revision,
       note_id: note.id,
       operation_type: operationType,
@@ -763,7 +904,7 @@ export class LocalNotesRepository {
   private async upsertPendingChange(
     operationType: "update_note" | "delete_note",
     note: LocalNote,
-    payload: LocalNotePayload | null,
+    encryptedPayload: EncryptedNotePayload | null,
     timestamp: string
   ): Promise<void> {
     const existing = await this.database.pending_changes
@@ -778,7 +919,7 @@ export class LocalNotesRepository {
 
     if (!existing) {
       await this.database.pending_changes.add(
-        this.newPendingChange(operationType, note, payload, timestamp)
+        this.newPendingChange(operationType, note, encryptedPayload, timestamp)
       );
       return;
     }
@@ -786,8 +927,8 @@ export class LocalNotesRepository {
     await this.database.pending_changes.put({
       ...existing,
       base_version_id: note.base_version_id,
-      encrypted_payload: null,
-      local_note_payload: payload ? { ...payload } : null,
+      encrypted_payload: encryptedPayload,
+      local_note_payload: null,
       local_revision: note.local_revision,
       status: "pending",
       last_error: null,
@@ -858,6 +999,7 @@ export class LocalNotesRepository {
       resolution: null,
       resolution_pending_change_id: null,
       resolved_at: null,
+      resolved_encrypted_payload: null,
       resolved_note_payload: null,
       status: "unresolved",
       user_id: this.userId,
@@ -935,6 +1077,7 @@ export class LocalNotesRepository {
       encrypted_title_nonce: note.encryptedTitleNonce,
       id: note.id,
       key,
+      local_encrypted_payload: existing?.local_encrypted_payload ?? null,
       local_note_payload: existing?.local_note_payload ?? null,
       local_revision: existing?.local_revision ?? 0,
       server_updated_at: note.updatedAt,

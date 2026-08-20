@@ -10,7 +10,7 @@ The first protocol is implemented:
 - `GET /api/workspaces/:workspaceId/sync/pull?cursor=...` returns ordered workspace note changes.
 - Server note versions are immutable and receive monotonically increasing per-note version numbers.
 - Client operation IDs are durable idempotency keys. Replaying the same request returns the stored result without creating another version.
-- IndexedDB stores retry state, encrypted prepared payloads, a stable per-workspace client ID, the pull cursor, last sync status, and explicit conflict snapshots.
+- IndexedDB stores encrypted local/pending payloads, retry state, a stable per-workspace client ID, the pull cursor, last sync status, and encrypted conflict snapshots.
 - The client pushes dependent local operations in order, then pulls until `hasMore` is false.
 - Existing direct note API creates, version appends, and deletes also emit ordered sync events.
 - Workspace headers, note lists, and note detail pages show a simple conflict badge.
@@ -19,7 +19,7 @@ The first protocol is implemented:
 - The workspace UI can create or unlock a stable, locally protected workspace key and invoke the sync engine manually.
 - Manual sync reports `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`; live pending and conflict counts update after sync and resolution transitions.
 
-Automatic merging, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. The sync engine requires an unlocked `CryptoKey` supplied by its local key provider. It encrypts through `@cipherspace/crypto` and never uploads the plaintext IndexedDB draft or persists a raw workspace key.
+Automatic merging, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. Create/edit UI requires an unlocked `CryptoKey`, encrypts through `@cipherspace/crypto` before IndexedDB persistence, and never gives the sync engine a plaintext draft or raw workspace key.
 
 ## Goals
 
@@ -42,11 +42,11 @@ Automatic merging, member/device key sharing, recovery, rotation, and automatic 
 
 ## Local-First Flow
 
-1. A local create, update, or tombstone delete writes the note and pending change in one IndexedDB transaction.
-2. The sync engine loads `pending` and `failed` operations in local creation order.
-3. The user creates or unlocks the workspace's local protected key and clicks **Sync**. A locked workspace cannot start manual sync.
-4. Creates and updates are serialized as `{ title, body }` and encrypted with `@cipherspace/crypto` using the unlocked workspace key. Deletes contain no payload.
-5. The encrypted envelope is stored on the exact pending revision before transport begins. A later local edit clears stale prepared ciphertext so it must be encrypted again.
+1. The user creates or unlocks the workspace's locally protected key. Create/edit controls remain disabled while locked.
+2. A create or update is serialized as `{ title, body }` and encrypted with `@cipherspace/crypto` using a fresh nonce; deletes contain no payload.
+3. The encrypted local note and matching encrypted pending change are written in one IndexedDB transaction.
+4. The sync engine loads `pending` and `failed` operations in local creation order. A locked workspace cannot start manual sync from the UI.
+5. Sync sends the exact envelope stored for that local revision. A later edit replaces it with a newly encrypted envelope; a compatibility path encrypts legacy plaintext queue records after unlock.
 6. The engine marks one operation `syncing`, increments its attempt count, and pushes it.
 7. An accepted or accepted-duplicate result marks that exact local revision `synced`, caches the server version, and rebases later dependent local operations onto the accepted version.
 8. A conflict result stores local, remote, and base snapshots and changes the pending operation to `conflict`.
@@ -54,7 +54,7 @@ Automatic merging, member/device key sharing, recovery, rotation, and automatic 
 10. After push processing, the client pulls from its saved cursor until the server reports no more pages.
 11. Each pull page and its new cursor are committed atomically. A failed or invalid page does not advance the cursor. Dexie live queries then refresh the unsynced and conflict indicators.
 
-When a conflict is resolved, the client performs one IndexedDB transaction: it updates the local note to the chosen content, rebases it to the selected remote version ID, retires all unresolved pending entries for that note, records the resolution on the preserved conflict snapshots, and creates one new `update_note` operation. The resolution does not contact the server. A later explicit sync encrypts and pushes that operation through the same path as any other local edit.
+When a conflict is resolved, the unlocked client encrypts the selected content and performs one IndexedDB transaction: it updates the encrypted local note, rebases it to the selected remote version ID, retires all unresolved pending entries, records the encrypted resolution on preserved conflict snapshots, and creates one encrypted `update_note` operation. The resolution does not contact the server. A later explicit sync pushes that durable envelope through the same path as any other local edit.
 
 Dependent operations are pushed sequentially. For example, an offline create followed by an edit first creates server version 1; the edit is then rebased to that accepted version and pushed as version 2.
 
@@ -164,8 +164,7 @@ The server compares an update or delete's `baseVersionId` with `encrypted_notes.
 
 When those IDs differ, the server does not insert a version and returns the current remote note/version. The client stores an unresolved conflict containing:
 
-- the local plaintext device draft snapshot;
-- the local encrypted envelope, if preparation completed;
+- the local encrypted device snapshot;
 - the local revision and pending operation ID;
 - the submitted base version ID and cached base version, when available;
 - the full current encrypted remote version and metadata.
@@ -176,7 +175,7 @@ Pull performs the same safety check locally. If a remote version arrives for a n
 
 Conflict resolution is device-local and explicit. The latest unresolved remote version for a note is the resolution base; attempting to resolve an older local conflict snapshot is rejected. The view shows:
 
-- the plaintext local draft snapshot captured when divergence was detected;
+- the local snapshot, decrypted in the unlocked client from its stored envelope;
 - the remote/server snapshot, decrypted in the unlocked client from its cached envelope;
 - remote version number, ID, parent, author, and timestamp;
 - the submitted `baseVersionId` and full cached base-version metadata when available.
@@ -187,9 +186,9 @@ Resolution choices are deterministic:
 - **Accept remote** uses the explicitly decrypted remote/server document.
 - **Manual merge** uses the title and body entered by the user in the merge editor.
 
-Every choice validates the resolved note payload, increments the local revision, sets `base_version_id` to the selected remote version, and creates a fresh pending operation ID. The old conflicted operations become `resolved` locally so they cannot be retried and are not misrepresented as server-accepted. Preserved conflict records also move from `unresolved` to `resolved` and store the action, resolution time, resolved local payload, and new pending-operation ID.
+Every choice validates and encrypts the resolved note payload, increments the local revision, sets `base_version_id` to the selected remote version, and creates a fresh pending operation ID. The old conflicted operations become `resolved` locally so they cannot be retried and are not misrepresented as server-accepted. Preserved conflict records also move from `unresolved` to `resolved` and store the action, resolution time, encrypted resolved payload, and new pending-operation ID.
 
-The resolved pending operation remains visible as one unsynced change. On the next manual sync it receives fresh AES-GCM ciphertext and nonce. If the remote base is still current, the server creates the immutable resolved version. If another server version arrived in the meantime, normal stale-base detection creates a new conflict rather than overwriting either side.
+The resolved pending operation remains visible as one unsynced encrypted change. If the remote base is still current on the next manual sync, the server creates the immutable resolved version. If another server version arrived in the meantime, normal stale-base detection creates a new conflict rather than overwriting either side.
 
 ## Retry And Failure States
 
@@ -229,6 +228,6 @@ Deletes are server tombstones. An accepted delete records the current base versi
 ## Backward Awareness
 
 - PostgreSQL migration `0005_note_sync_protocol.sql` adds durable idempotency outcomes.
-- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys. Schema version 4 adds durable resolution metadata to conflict records without deleting their original snapshots.
+- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys. Schema version 4 adds durable resolution metadata. Schema version 5 adds encrypted local/resolved payload fields; legacy plaintext content is encrypted and cleared lazily after unlock because schema upgrade code has no workspace key.
 - Envelope version 1 and cursor version 1 are explicit.
 - Future persisted-format changes require additive database migrations and compatibility notes.

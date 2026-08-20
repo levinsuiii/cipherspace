@@ -36,6 +36,7 @@ export interface LocalNote {
   encrypted_title_nonce: string | null;
   id: string;
   key: string;
+  local_encrypted_payload: EncryptedNotePayload | null;
   local_note_payload: LocalNotePayload | null;
   local_revision: number;
   server_updated_at: string | null;
@@ -106,6 +107,7 @@ export interface LocalConflict {
   resolution: ConflictResolution | null;
   resolution_pending_change_id: string | null;
   resolved_at: string | null;
+  resolved_encrypted_payload: EncryptedNotePayload | null;
   resolved_note_payload: LocalNotePayload | null;
   status: "resolved" | "unresolved";
   user_id: string;

@@ -5,6 +5,10 @@ import { ErrorState, LoadingState } from "../components/AsyncState";
 import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
+import {
+  decryptLocalNotePayload,
+  encryptLocalNotePayload
+} from "../local-storage/notePayloadCrypto";
 import type {
   ConflictResolution,
   LocalNotePayload,
@@ -49,6 +53,7 @@ export function ConflictResolutionPage() {
   const { noteId = "" } = useParams();
   const localData = useLocalData();
   const workspaceKey = useWorkspaceKey(workspace.id);
+  const [localPayload, setLocalPayload] = useState<LocalNotePayload | null>(null);
   const [remotePayload, setRemotePayload] = useState<LocalNotePayload | null>(null);
   const [decryptError, setDecryptError] = useState<string | null>(null);
   const [mergeBody, setMergeBody] = useState("");
@@ -63,21 +68,26 @@ export function ConflictResolutionPage() {
   const conflict = conflictQuery.data;
 
   useEffect(() => {
-    if (!conflict) return;
-    setMergeTitle(conflict.local_note_payload?.title ?? "");
-    setMergeBody(conflict.local_note_payload?.body ?? "");
-  }, [conflict?.id]);
-
-  useEffect(() => {
     let active = true;
+    setLocalPayload(null);
     setRemotePayload(null);
     setDecryptError(null);
     if (!conflict || workspaceKey.status !== "unlocked") return () => { active = false; };
 
     void workspaceKey.getKey()
-      .then((key) => decryptCachedNoteVersion(conflict.remote_version, key))
-      .then((payload) => {
-        if (active) setRemotePayload(payload);
+      .then(async (key) => {
+        const local = conflict.local_encrypted_payload
+          ? await decryptLocalNotePayload(conflict.local_encrypted_payload, key)
+          : conflict.local_note_payload;
+        const remote = await decryptCachedNoteVersion(conflict.remote_version, key);
+        return { local, remote };
+      })
+      .then(({ local, remote }) => {
+        if (!active) return;
+        setLocalPayload(local);
+        setRemotePayload(remote);
+        setMergeTitle(local?.title ?? "");
+        setMergeBody(local?.body ?? "");
       })
       .catch((error: unknown) => {
         if (active) {
@@ -97,20 +107,25 @@ export function ConflictResolutionPage() {
     setResolutionError(null);
     setIsResolving(true);
     try {
+      const key = await workspaceKey.getKey();
       if (resolution === "keep_local") {
-        await localData.resolveConflict(conflict.id, { action: "keep_local" });
+        if (!localPayload) throw new Error("Unlock and decrypt the local version first.");
+        const encrypted = await encryptLocalNotePayload(localPayload, key);
+        await localData.resolveConflict(conflict.id, { action: "keep_local" }, encrypted);
       } else if (resolution === "accept_remote") {
         if (!remotePayload) throw new Error("Unlock and decrypt the remote version first.");
+        const encrypted = await encryptLocalNotePayload(remotePayload, key);
         await localData.resolveConflict(conflict.id, {
           action: "accept_remote",
           remote_payload: remotePayload
-        });
+        }, encrypted);
       } else {
         if (!mergedPayload) throw new Error("Enter the merged note content first.");
+        const encrypted = await encryptLocalNotePayload(mergedPayload, key);
         await localData.resolveConflict(conflict.id, {
           action: "manual_merge",
           merged_payload: mergedPayload
-        });
+        }, encrypted);
       }
       setResolvedWith(resolution);
     } catch (error) {
@@ -173,10 +188,10 @@ export function ConflictResolutionPage() {
       <div className="conflict-columns">
         <section className="panel conflict-choice">
           <p className="eyebrow">Local version · revision {conflict.local_revision}</p>
-          <NoteSnapshot payload={conflict.local_note_payload} />
+          <NoteSnapshot payload={workspaceKey.status === "unlocked" ? localPayload : null} />
           <button
             className="button button--secondary button--full"
-            disabled={!canResolve || isResolving || !conflict.local_note_payload}
+            disabled={!canResolve || isResolving || !localPayload}
             onClick={() => void resolve("keep_local")}
             type="button"
           >
@@ -213,7 +228,7 @@ export function ConflictResolutionPage() {
               maxLength={200}
               onChange={(event) => setMergeTitle(event.target.value)}
               required
-              value={mergeTitle}
+              value={workspaceKey.status === "unlocked" ? mergeTitle : ""}
             />
           </label>
           <label>
@@ -222,7 +237,7 @@ export function ConflictResolutionPage() {
               disabled={!canResolve || isResolving}
               onChange={(event) => setMergeBody(event.target.value)}
               rows={16}
-              value={mergeBody}
+              value={workspaceKey.status === "unlocked" ? mergeBody : ""}
             />
           </label>
           <button
