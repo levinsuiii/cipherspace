@@ -141,9 +141,9 @@ Local development uses Vite's same-origin `/api` proxy. The Docker web container
 
 The note UI now creates, edits, and soft-deletes local notes without waiting for the API. Successful API reads refresh workspace, note metadata, and latest-version envelope caches. When the API is unavailable, cached workspace and note screens remain usable and every local mutation is committed atomically with its pending change. The browser caches the last verified user profile, but never the HTTP-only session token, so user-scoped local data can be reopened during a network outage.
 
-The client sync domain now prepares encrypted pending operations through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and explicit conflict snapshots remain in IndexedDB. The engine accepts an unlocked workspace key from its caller; the React application does not yet have the key-management and unlock flow needed to invoke it automatically.
+The client sync domain now prepares encrypted pending operations through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and explicit conflict snapshots remain in IndexedDB. A workspace-level React provider supplies the engine with an unlocked in-memory key, and the workspace UI exposes explicit key creation/unlock plus manual sync.
 
-This slice intentionally stores local editor payloads as plaintext structured-clone values because workspace key creation, wrapping, unlock, and recovery are not designed yet. Pending payloads must pass through `@cipherspace/crypto` before any future upload; the queue is not an authorization to send plaintext to the backend.
+Local editor payloads intentionally remain plaintext structured-clone values in v1. Pending payloads must pass through `@cipherspace/crypto` before upload; the queue is never an authorization to send plaintext to the backend. Protecting the workspace key does not provide encrypted-at-rest local drafts.
 
 ## Implemented Client Crypto Package
 
@@ -157,11 +157,13 @@ The implemented v1 primitives are:
 - Serialize ciphertext and nonces as canonical base64 in a strict envelope containing algorithm, envelope version, and workspace key version.
 - Authenticate the fixed envelope metadata as AES-GCM additional authenticated data.
 - Export and import 32-byte raw workspace keys for a future key-wrapping flow. Raw exports are sensitive and must not be persisted or transmitted without wrapping.
+- Protect a workspace key locally with an independently chosen unlock password using PBKDF2-HMAC-SHA-256 with a random 128-bit salt and 600,000 iterations, then AES-256-GCM wrapping with a fresh 96-bit nonce and a 128-bit tag.
+- Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
 
 The package envelope is intentionally transport-independent. The later frontend integration will map its `ciphertext` and `nonce` fields into the existing API's `encryptedContent` and `contentNonce` fields and provide a key-management identifier for `encryptionMetadata.keyId`; the backend contract is unchanged in this slice.
 
-Passphrase-based derivation is not implemented. The architecture does not yet define password-based unlock, private-key wrapping, recovery, or parameter migration, and authentication passwords must not be reused directly as encryption keys. Define that complete flow before selecting a password KDF.
+The v1 local unlock password is separate from the account password and is never stored or sent to the backend. It derives only a wrapping key; it is not used directly as note key material. There is no recovery, parameter migration, multi-device transfer, or member key-sharing flow yet. Losing the password or browser profile can make server ciphertext unavailable to this client.
 
 ## Database Schema Plan
 
@@ -186,7 +188,7 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 
 ## Implemented Local Storage
 
-`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 2 contains:
+`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 3 contains:
 
 - `workspaces`: workspace metadata and the current user's cached role.
 - `notes`: stable note identity, local title/body payload, tombstone, local revision, base version, and server-visible note metadata.
@@ -194,6 +196,7 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 - `pending_changes`: durable `create_note`, `update_note`, and `delete_note` mutations.
 - `local_sync_metadata`: per-workspace client ID, opaque pull cursor, last-successful-sync timestamp, and last sync error.
 - `conflicts`: unresolved local/base/remote snapshots created by push or pull conflict detection.
+- `workspace_keys`: one user/workspace-scoped protected-key envelope containing only ciphertext, KDF parameters, salt, nonce, and authenticated format metadata.
 
 Note mutations and their pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest payload, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
 
@@ -206,7 +209,7 @@ Sensitive local storage rules:
 - Avoid logging decrypted note content.
 - Prefer keeping unwrapped workspace keys in memory only after unlock.
 - If persisted key material is needed, store only wrapped keys and document the risk.
-- Until a key-management design exists, local plaintext drafts remain in the browser profile after logout and must be treated as device-local sensitive data.
+- Local plaintext drafts remain in the browser profile after logout and must be treated as device-local sensitive data; locking the workspace clears the in-memory key but does not encrypt or erase drafts.
 
 ## Architecture Decisions
 
@@ -222,6 +225,8 @@ Sensitive local storage rules:
 - Create an immutable initial version with each note, assign later versions monotonically increasing per-note numbers under a row lock, and set their parent to the version current at append time. Base-version conflict checks remain deferred to the sync protocol.
 - Use the platform Web Crypto API through the isolated `@cipherspace/crypto` package for AES-256-GCM note encryption. Version 1 envelopes use random 96-bit nonces, 128-bit tags, canonical base64, envelope version 1, and workspace key version 1.
 - Keep raw workspace keys in caller-managed memory. Raw key import/export supports future wrapping but is not a persistence or sharing design.
+- For the local-only v1 unlock model, persist a versioned AES-GCM-protected workspace key in user-scoped IndexedDB. Derive its wrapping key with PBKDF2-HMAC-SHA-256, a random 128-bit salt, and 600,000 iterations; bind the user and workspace identifiers through authenticated additional data.
+- Require an explicit local unlock password after reload and expose manual sync only while the workspace key is unlocked. Do not reuse the account password or send protection material to the backend.
 - Scope IndexedDB records by user ID and commit local note state and its pending mutation atomically.
 - Treat the local database as the editing source of truth; sync transport reads durable pending operations rather than submitting directly from editor forms.
 - Use workspace-scoped sync routes, client operation UUIDs plus request fingerprints for idempotency, and opaque sequence cursors for resumable pulls.

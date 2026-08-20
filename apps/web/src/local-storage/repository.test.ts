@@ -77,9 +77,31 @@ describe("LocalNotesRepository", () => {
       "update_note"
     ]);
     expect(changes[1]).toMatchObject({
+      encrypted_payload: null,
       local_note_payload: { body: "three", title: "Renamed" },
       local_revision: 3,
       status: "pending"
+    });
+  });
+
+  it("discards prepared ciphertext when a pending edit changes again", async () => {
+    const note = await repository.createNote(workspaceId, { body: "one", title: "Draft" });
+    await repository.editNote(note.id, { body: "two", title: "Draft" });
+    const update = (await repository.listPendingChanges(workspaceId))[1]!;
+    await repository.storeEncryptedPayload(update.id, update.local_revision, {
+      algorithm: "AES-GCM",
+      ciphertext: "AAAAAAAAAAAAAAAAAAAAAA==",
+      envelopeVersion: 1,
+      keyVersion: 1,
+      nonce: "AAAAAAAAAAAAAAAA"
+    });
+
+    await repository.editNote(note.id, { body: "newest", title: "Draft" });
+
+    await expect(database.pending_changes.get(update.id)).resolves.toMatchObject({
+      encrypted_payload: null,
+      local_note_payload: { body: "newest", title: "Draft" },
+      local_revision: 3
     });
   });
 

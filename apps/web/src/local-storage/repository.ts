@@ -655,6 +655,7 @@ export class LocalNotesRepository {
     await this.database.pending_changes.put({
       ...existing,
       base_version_id: note.base_version_id,
+      encrypted_payload: null,
       local_note_payload: payload ? { ...payload } : null,
       local_revision: note.local_revision,
       status: "pending",

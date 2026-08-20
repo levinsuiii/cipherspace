@@ -11,3 +11,5 @@ export { CipherSpaceCryptoError } from "./errors.js";
 export { decryptNoteContent, encryptNoteContent, generateNonce } from "./note-content.js";
 export type { CryptoErrorCode, EncryptedNotePayload } from "./types.js";
 export { exportWorkspaceKey, generateWorkspaceKey, importWorkspaceKey } from "./workspace-key.js";
+export type { ProtectedWorkspaceKey, WorkspaceKeyProtectionContext } from "./types.js";
+export { protectWorkspaceKey, unlockWorkspaceKey } from "./workspace-key-protection.js";

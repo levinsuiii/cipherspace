@@ -49,8 +49,8 @@ export function AuthPage({ mode }: AuthPageProps) {
           <p className="eyebrow">Encrypted collaboration, built in the open</p>
           <h1>A quiet workspace for sensitive team thinking.</h1>
           <p>
-            This foundation connects to the CipherSpace API. Client-side encryption and offline
-            persistence are intentionally not part of this milestone.
+            Notes save locally first. Unlock a workspace key when you are ready to encrypt and
+            sync pending changes to the CipherSpace API.
           </p>
         </div>
       </section>

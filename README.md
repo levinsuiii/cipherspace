@@ -25,6 +25,8 @@ Open the frontend at `http://localhost:8080`. The API is also available directly
 Invoke-RestMethod http://localhost:8080/health
 ```
 
+The direct health check at `http://localhost:3000/health` should also return `200`.
+
 The API container waits for PostgreSQL, runs pending migrations, and then starts the server. The Nginx web container serves the frontend and proxies `/api` requests to the API so cookie sessions remain same-origin. `WEB_PORT` can override the default frontend port of `8080`.
 
 Stop the services with `docker compose down`. To also remove local database data, run `docker compose down --volumes`.
@@ -73,7 +75,9 @@ npm run preview --workspace @cipherspace/web
 
 The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, and a local-first note editor. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflicts are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators.
 
-The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext. It requires an unlocked workspace `CryptoKey` from its caller. Secure key creation, persistence, member sharing, and unlock are not implemented, so the current React UI does not trigger sync automatically. Titles and bodies remain plaintext in the browser profile's IndexedDB, including after logout. Do not treat this implementation as encrypted at-rest storage.
+The workspace UI now provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext.
+
+This v1 key is tied to the current user, workspace, and browser profile. There is no recovery or member/device key sharing yet. Titles and bodies remain plaintext in the browser profile's IndexedDB, including after logout, so workspace lock does not provide encrypted-at-rest local drafts.
 
 ## Manual frontend check
 
@@ -81,11 +85,14 @@ The sync engine encrypts pending create/update snapshots through `@cipherspace/c
 2. Register with an email and a password containing 12–128 characters. Registration should open the empty workspace page.
 3. Create a workspace and confirm its overview shows the current account as an owner.
 4. Open **Notes** and confirm the empty state appears.
-5. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes.
-6. Edit the note, save it locally, and reload the page. Confirm the latest title/body and unsynced state remain.
-7. Stop the API or disable the browser network, reload, and confirm the cached workspace and note remain editable. Re-enable the API afterward.
-8. As a workspace owner, delete the note locally and confirm it disappears from the note list while the workspace still reports pending changes.
-9. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache.
+5. In the workspace sync panel, choose a separate local unlock password of 12–128 characters and select **Create and unlock key**. Keep that password available; v1 has no recovery.
+6. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes and sync status `idle`.
+7. Select **Sync**. Confirm the status changes through `syncing` to `synced` and the unsynced count drops (normally to zero). The backend stores only ciphertext and metadata.
+8. Edit the note again and confirm the unsynced indicator returns. Select **Sync** again to push the next encrypted version.
+9. Reload the page. Confirm the workspace is `locked`, unlock it with the same local password, and verify another manual sync succeeds. This demonstrates that reload did not replace the workspace key.
+10. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
+11. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
+12. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
 
 ## Authentication
 
@@ -175,7 +182,7 @@ Non-members receive `404` for workspace-scoped reads so the API does not disclos
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption and is used by sync preparation. Key persistence, wrapping, sharing, and UI unlock are not implemented.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note encryption/decryption, and local password protection for the workspace key. The React workspace UI creates/unlocks that local key and passes it to manual sync. Member/device key sharing, recovery, rotation, and revocation are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -262,5 +269,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, push/pull transport, idempotency, cursor persistence, retry state, and conflict detection are implemented. Production key unlock/sharing, automatic sync invocation, conflict resolution, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, and conflict detection are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, conflict resolution, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

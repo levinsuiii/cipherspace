@@ -14,8 +14,10 @@ The first protocol is implemented:
 - The client pushes dependent local operations in order, then pulls until `hasMore` is false.
 - Existing direct note API creates, version appends, and deletes also emit ordered sync events.
 - Workspace headers, note lists, and note detail pages show a simple conflict badge.
+- The workspace UI can create or unlock a stable, locally protected workspace key and invoke the sync engine manually.
+- Manual sync reports `idle`, `syncing`, `synced`, `failed`, or `locked`; the live pending count updates when accepted operations become `synced`.
 
-Conflict resolution, a merge editor, key sharing, automatic background sync, and a production workspace-key unlock flow remain deferred. The sync engine requires an unlocked `CryptoKey` supplied by its caller. It encrypts through `@cipherspace/crypto` and never uploads the plaintext IndexedDB draft or persists a raw workspace key.
+Conflict resolution, a merge editor, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. The sync engine requires an unlocked `CryptoKey` supplied by its local key provider. It encrypts through `@cipherspace/crypto` and never uploads the plaintext IndexedDB draft or persists a raw workspace key.
 
 ## Goals
 
@@ -40,14 +42,15 @@ Conflict resolution, a merge editor, key sharing, automatic background sync, and
 
 1. A local create, update, or tombstone delete writes the note and pending change in one IndexedDB transaction.
 2. The sync engine loads `pending` and `failed` operations in local creation order.
-3. Creates and updates are serialized as `{ title, body }` and encrypted with `@cipherspace/crypto` using a caller-supplied unlocked workspace key. Deletes contain no payload.
-4. The encrypted envelope is stored on the pending record before transport begins.
-5. The engine marks one operation `syncing`, increments its attempt count, and pushes it.
-6. An accepted or accepted-duplicate result marks that exact local revision `synced`, caches the server version, and rebases later dependent local operations onto the accepted version.
-7. A conflict result stores local, remote, and base snapshots and changes the pending operation to `conflict`.
-8. A rejected or interrupted attempt becomes `failed` with its last error and remains retryable.
-9. After push processing, the client pulls from its saved cursor until the server reports no more pages.
-10. Each pull page and its new cursor are committed atomically. A failed or invalid page does not advance the cursor.
+3. The user creates or unlocks the workspace's local protected key and clicks **Sync**. A locked workspace cannot start manual sync.
+4. Creates and updates are serialized as `{ title, body }` and encrypted with `@cipherspace/crypto` using the unlocked workspace key. Deletes contain no payload.
+5. The encrypted envelope is stored on the exact pending revision before transport begins. A later local edit clears stale prepared ciphertext so it must be encrypted again.
+6. The engine marks one operation `syncing`, increments its attempt count, and pushes it.
+7. An accepted or accepted-duplicate result marks that exact local revision `synced`, caches the server version, and rebases later dependent local operations onto the accepted version.
+8. A conflict result stores local, remote, and base snapshots and changes the pending operation to `conflict`.
+9. A rejected or interrupted attempt becomes `failed` with its last error and remains retryable.
+10. After push processing, the client pulls from its saved cursor until the server reports no more pages.
+11. Each pull page and its new cursor are committed atomically. A failed or invalid page does not advance the cursor. Dexie live queries then refresh the unsynced and conflict indicators.
 
 Dependent operations are pushed sequentially. For example, an offline create followed by an edit first creates server version 1; the edit is then rebased to that accepted version and pushed as version 2.
 
@@ -181,7 +184,9 @@ Each attempt stores `attempt_count`, `last_attempt_at`, and `last_error`. If a u
 
 The server validates envelope shape, base64 encoding, and size, but treats ciphertext as opaque. The client sync helper calls `encryptNoteContent()` from `@cipherspace/crypto`; it does not implement cryptography itself.
 
-Workspace-key creation, wrapping, member sharing, recovery, and unlock are not part of this protocol milestone. The engine therefore accepts an unlocked `CryptoKey` from its caller. The current application has no production key provider and does not automatically invoke sync from the UI. This deliberate limitation prevents plaintext upload, raw-key persistence, or an insecure improvised key derivation scheme.
+The local-only v1 key provider creates one random AES-256-GCM workspace key and immediately protects it with an independently chosen local unlock password. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key. A fresh 96-bit nonce is used for the key wrap, and authenticated additional data binds the protection version, user ID, and workspace ID. IndexedDB schema version 3 stores only the versioned protected-key envelope; the raw/unwrapped key exists only in memory while unlocked.
+
+After reload, the workspace is `locked` and the same local unlock password is required to unwrap the persisted key. The account password is not reused. The password, derived key, and raw workspace key are not sent to or stored by the backend. This is a single-browser-profile bootstrap model: member sharing, another-device provisioning, recovery, key rotation, and revocation are explicitly absent.
 
 ## Delete Semantics
 
@@ -194,12 +199,13 @@ Deletes are server tombstones. An accepted delete records the current base versi
 - CRDTs or Operational Transform.
 - WebSockets, real-time collaboration, or push notifications.
 - Background/service-worker sync.
+- Workspace-key sharing, recovery, rotation, or revocation.
 - Comments.
 - Version restore.
 
 ## Backward Awareness
 
 - PostgreSQL migration `0005_note_sync_protocol.sql` adds durable idempotency outcomes.
-- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records.
+- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys.
 - Envelope version 1 and cursor version 1 are explicit.
 - Future persisted-format changes require additive database migrations and compatibility notes.

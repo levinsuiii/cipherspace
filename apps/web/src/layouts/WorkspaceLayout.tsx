@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type { Workspace } from "../api/types";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { WorkspaceSyncControls } from "../components/WorkspaceSyncControls";
+import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
+import { NoteSyncEngine } from "../sync/engine";
 
 export interface WorkspaceOutletContext {
   workspace: Workspace;
@@ -14,6 +18,11 @@ export interface WorkspaceOutletContext {
 export function WorkspaceLayout() {
   const { workspaceId = "" } = useParams();
   const localData = useLocalData();
+  const workspaceKey = useWorkspaceKey(workspaceId);
+  const syncEngine = useMemo(
+    () => new NoteSyncEngine(localData, api.sync, { getWorkspaceKey: workspaceKey.getKey }),
+    [localData, workspaceKey.getKey]
+  );
   const cachedWorkspaceQuery = useLocalQuery(
     () => localData.getWorkspace(workspaceId),
     [localData, workspaceId]
@@ -48,6 +57,8 @@ export function WorkspaceLayout() {
           updatedAt: cachedWorkspace.updated_at
         }
       : undefined);
+  const workspaceError = workspaceQuery.error;
+  const serverUnavailable = workspaceError instanceof TypeError;
 
   if (!workspace && (workspaceQuery.isLoading || cachedWorkspaceQuery.isLoading)) {
     return <LoadingState label="Loading workspace…" />;
@@ -61,10 +72,17 @@ export function WorkspaceLayout() {
 
   return (
     <section>
-      {workspaceQuery.isError ? (
+      {serverUnavailable ? (
         <div className="offline-callout" role="status">
           The server is unavailable. Showing the local workspace cache; note edits still save on
           this device.
+        </div>
+      ) : null}
+      {workspaceQuery.isError && !serverUnavailable ? (
+        <div className="form-error" role="alert">
+          {workspaceError instanceof ApiError
+            ? workspaceError.message
+            : "The workspace could not be refreshed from the server."}
         </div>
       ) : null}
       <div className="breadcrumb"><NavLink to="/workspaces">Workspaces</NavLink><span>/</span></div>
@@ -85,6 +103,14 @@ export function WorkspaceLayout() {
           <span className={`role-badge role-badge--${workspace.role}`}>{workspace.role}</span>
         </div>
       </header>
+      <WorkspaceSyncControls
+        keyStatus={workspaceKey.status}
+        onCreateKey={workspaceKey.create}
+        onLock={workspaceKey.lock}
+        onSync={() => syncEngine.syncWorkspace(workspace.id)}
+        onUnlock={workspaceKey.unlock}
+        pendingCount={pendingChangesQuery.data ?? 0}
+      />
       <nav className="tabs" aria-label="Workspace navigation">
         <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>
         <NavLink to={`/workspaces/${workspace.id}/notes`}>Notes</NavLink>

@@ -8,7 +8,9 @@ The backend now provides email/password account registration, database-backed se
 
 Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package now generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note content with 128-bit authentication tags, and validates versioned envelopes. Fixed envelope metadata is authenticated as additional data. Wrong keys, tampered ciphertext, and malformed payloads fail without returning plaintext.
 
-The sync engine is connected to these primitives: when its caller supplies an unlocked workspace `CryptoKey`, it serializes the local title/body snapshot, encrypts it through `@cipherspace/crypto`, persists the encrypted prepared operation, and only then constructs a push request. It never falls back to uploading the plaintext draft. The local-first editor still stores user-scoped plaintext title/body drafts in IndexedDB. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, and encrypted local drafts remain unimplemented, so the React UI does not automatically invoke sync. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
+The sync engine is connected to these primitives: when the local key provider supplies an unlocked workspace `CryptoKey`, it serializes the local title/body snapshot, encrypts it through `@cipherspace/crypto`, persists the encrypted prepared operation, and only then constructs a push request. It never falls back to uploading the plaintext draft. The React UI can invoke this engine manually while unlocked.
+
+The local-only v1 key flow generates one random workspace key, protects it under a separate local unlock password, and persists only the protected envelope in user-scoped IndexedDB. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key; wrapping uses a fresh 96-bit nonce and binds the format, user ID, and workspace ID as authenticated additional data. The password and raw/unwrapped key are not persisted or sent to the backend, and the unwrapped `CryptoKey` exists only in browser memory while unlocked. The local-first editor still stores user-scoped plaintext title/body drafts in IndexedDB. Member/device key sharing, recovery, rotation, revocation, lock timeout, and encrypted local drafts remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
 
 The browser stores the last successfully verified user profile in local storage so the matching IndexedDB scope can be reopened when session verification fails because the network is unavailable. It does not store the HTTP-only session token. An explicit 401 response or successful logout clears this profile cache. This offline identity is a local routing/data-selection convenience, not proof of current server authorization.
 
@@ -77,14 +79,20 @@ Implemented primitive model:
 - Authenticate fixed envelope metadata as AES-GCM additional authenticated data.
 - Strictly validate envelope fields, versions, base64 encodings, nonce length, and ciphertext size before decryption.
 
-Not yet implemented around those primitives:
+Implemented local-only bootstrap around those primitives:
 
-- Create and retain the workspace key as part of the workspace creation flow.
-- Map the package envelope to the existing note API in the frontend.
+- Create a random workspace key on first unlock setup and map encrypted pending envelopes to sync requests.
+- Protect it locally with an independent 12-to-128-character unlock password using PBKDF2-HMAC-SHA-256 and AES-256-GCM.
+- Store only salt, nonce, KDF parameters, authenticated format metadata, and wrapped-key ciphertext in IndexedDB.
+- Keep the unwrapped key in memory and require unlock again after reload or explicit lock.
+
+Not yet implemented:
+
 - Give each user or device a key-wrapping public key using reviewed Web Crypto algorithms.
 - Wrap the workspace key separately for each member using that member's wrapping key.
 - Store each member's wrapped workspace key in `workspace_members`.
-- Unwrap workspace keys only on authorized clients after sign-in or unlock.
+- Provision the same workspace key to another authorized browser or member.
+- Recover, rotate, revoke, or migrate protected keys.
 
 The package exposes raw workspace-key import and export only as a building block for future wrapping. Raw exported keys provide full decryption capability and must not be stored or transmitted unwrapped.
 
@@ -94,7 +102,8 @@ Password handling:
 - Do not store plaintext passwords or password-equivalent secrets.
 - Accept passwords from 12 through 128 characters and normalize account emails to lowercase.
 - Return the same login error for unknown emails and incorrect passwords; perform an Argon2 verification in both cases to reduce account-enumeration timing differences.
-- If password-derived wrapping is used for private keys, use a reviewed password-based KDF with strong parameters and document recovery limitations.
+- Keep the local unlock password separate from the account password. It is never sent to the backend and has no recovery flow.
+- Derive only the local wrapping key with PBKDF2-HMAC-SHA-256, a per-envelope random 128-bit salt, and 600,000 iterations; never use the password directly as a workspace content key.
 
 Session handling:
 
@@ -116,7 +125,7 @@ Current membership flow:
 
 1. An authenticated user creates a workspace and becomes its first owner.
 2. An owner identifies an existing account by email or user ID and assigns a role.
-3. The backend immediately records membership. There is no pending invitation, email delivery, key generation, or key wrapping yet.
+3. The backend immediately records membership. There is no pending invitation, email delivery, or key sharing; locally creating a key does not provision it to the added member.
 
 Roles for v1:
 
@@ -157,7 +166,7 @@ Unauthorized workspace access:
 Database compromise:
 
 - Mitigate by storing note content only as encrypted envelopes.
-- The client package provides authenticated encryption, but the current frontend does not use it and the backend treats submitted envelope fields as opaque. The backend cannot verify that clients performed authenticated encryption correctly.
+- The manual sync client uses authenticated encryption, while the backend treats submitted envelope fields as opaque and cannot verify that clients performed authenticated encryption correctly.
 - Residual risk: metadata remains visible.
 
 Network interception:
@@ -186,10 +195,11 @@ Compromised user device:
 - Out of scope for strong protection once the user unlocks content.
 - Avoid sensitive logs and scope local records by user ID.
 - Residual risk: local note title/body drafts and pending payloads are currently plaintext in IndexedDB and remain after logout until browser data is cleared. Anyone who can access the browser profile, execute same-origin code, or compromise the device may read them.
+- The protected workspace-key envelope permits offline password guessing after browser-profile compromise. The 600,000-iteration PBKDF2 cost slows guesses but cannot compensate for a weak unlock password.
 
 Lost password:
 
-- If keys are password-protected and no recovery design exists, encrypted content may be unrecoverable.
+- The v1 protected workspace key has no recovery path. Losing the local unlock password or deleting the browser profile can make already-synced ciphertext unrecoverable from this client.
 - Any password reset flow must not silently grant access to existing encrypted content unless a documented recovery-key design exists.
 
 Member removal:
@@ -212,13 +222,13 @@ Conflict overwrite:
 - v1 does not include formal cryptographic review.
 - The implemented package does not prevent nonce reuse by callers that bypass `encryptNoteContent()` and invoke Web Crypto directly with the same workspace key.
 - Workspace keys are extractable to enable future wrapping. An XSS payload, malicious browser extension, compromised device, or malicious frontend bundle running in the unlocked client context can access plaintext and key material.
-- There is no implemented secure storage, lock timeout, member key sharing, recovery, key rotation, or cryptographic revocation flow.
-- Passphrase-based derivation is intentionally absent until unlock and recovery semantics are designed; account passwords do not currently unlock encrypted workspace keys.
+- The protected envelope lives in ordinary IndexedDB rather than hardware-backed storage. There is no lock timeout, member/device key sharing, recovery, key rotation, parameter migration, or cryptographic revocation flow.
+- The local unlock password is independent of the account password. Creating a separate key in another browser or for another member does not grant access to ciphertext produced with the original key.
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
 - Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
-- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, and unresolved conflict metadata in the browser profile. It does not persist the raw workspace key.
+- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, unresolved conflict metadata, and a password-protected workspace-key envelope in the browser profile. It does not persist the raw workspace key or unlock password.
 
 ## Documentation Requirements For Future Changes
 

@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, an isolated client crypto package, durable local-first storage, and the first encrypted-note push/pull protocol. Production workspace-key unlock/sharing and conflict resolution remain separate future work.
+CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, an isolated client crypto package, durable local-first storage, the first encrypted-note push/pull protocol, and a minimal local-only workspace-key unlock plus manual sync flow. Multi-user key sharing, recovery, rotation, and conflict resolution remain separate future work.
 
 ## Current Status
 
@@ -18,9 +18,10 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Workspace and note pages use the local database as their durable display source and refresh caches from successful API reads. Cached pages remain editable when those API reads fail.
 - Note and workspace surfaces show unsynced and conflict badges based on durable local records.
 - A typed client sync engine encrypts queued create/update snapshots through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated remote pages, persists opaque cursors, and safely records failures.
-- The engine requires a caller-supplied unlocked workspace key. Because secure workspace key creation, persistence, and sharing are not implemented, the React UI does not yet trigger production sync automatically.
+- The workspace UI creates a random workspace key, protects it locally under a separate unlock password, unlocks it after reload, and supplies the in-memory key to the sync engine.
+- An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `failed`, or `locked`. Dexie live queries update the unsynced count after accepted operations are marked `synced`.
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
-- Local storage tests use `fake-indexeddb` and cover creation, editing, pending change representation, database reopen/reload durability, and tombstone deletion.
+- Local storage tests use `fake-indexeddb` and cover creation, editing, pending change representation, database reopen/reload durability, tombstone deletion, protected-key persistence, and unlock after database reopen.
 - `GET /health` checks PostgreSQL connectivity and returns `200` when the database is reachable or `503` when it is unavailable.
 - PostgreSQL access uses a small `pg` connection-pool adapter.
 - An ordered SQL migration runner records migration filenames and checksums in `schema_migrations`.
@@ -52,8 +53,9 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - `packages/crypto` contains browser-compatible TypeScript wrappers around the platform Web Crypto API and has no runtime dependencies.
 - The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces, encrypts and decrypts UTF-8 note content with 128-bit authentication tags, and serializes strict version 1 envelopes as canonical base64.
 - Fixed envelope metadata is authenticated as AES-GCM additional data. Runtime validation rejects missing or extra fields, unsupported algorithms or versions, malformed base64, incorrect nonce lengths, oversized ciphertext, tampering, and wrong keys without returning plaintext.
-- Raw 32-byte workspace keys can be exported and imported to support a future wrapping flow. Secure key persistence, member wrapping and sharing, recovery, rotation, and revocation are explicitly not implemented.
-- Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, wrong-key and ciphertext-authentication failures, and malformed payloads.
+- Raw 32-byte workspace keys can be exported and imported for wrapping. The v1 local flow protects them with PBKDF2-HMAC-SHA-256 (random 128-bit salt, 600,000 iterations) and AES-256-GCM before IndexedDB persistence; unwrapped keys remain in memory only.
+- Member wrapping and sharing, recovery, parameter migration, key rotation, and revocation are explicitly not implemented.
+- Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, protected-key round trips, wrong password/context, wrong-key and ciphertext-authentication failures, and malformed payloads.
 
 The established stack is React, TypeScript, Vite, React Router, TanStack Query, Dexie, and IndexedDB for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. `fake-indexeddb` provides deterministic local persistence tests.
 
@@ -100,7 +102,7 @@ Deferred until after notes, encryption, and sync are stable:
 
 ## Recommended Tech Stack
 
-The backend, frontend foundation, local persistence, and client-crypto primitive portions of this stack are installed; sync and key-management choices remain recommendations:
+The backend, frontend foundation, local persistence, client crypto, first sync protocol, and local-only v1 key bootstrap are installed; multi-user key management remains future work:
 
 - Frontend: TypeScript, React, Vite, React Router, TanStack Query (implemented foundation).
 - Local storage: IndexedDB through Dexie.
@@ -108,7 +110,7 @@ The backend, frontend foundation, local persistence, and client-crypto primitive
 - Database: PostgreSQL (implemented).
 - Validation: Zod at API and sync boundaries.
 - Authentication: password auth with Argon2id password hashing and secure HTTP-only sessions (implemented).
-- Crypto: Web Crypto API using AES-256-GCM for authenticated encryption and platform secure randomness (primitive package implemented; application integration and key sharing remain).
+- Crypto: Web Crypto API using AES-256-GCM for authenticated encryption and local key wrapping, PBKDF2-HMAC-SHA-256 for the local wrapping key, and platform secure randomness (local application integration implemented; key sharing remains).
 - Testing: Vitest for backend and frontend unit tests (implemented); Playwright remains recommended for core browser flows.
 - Formatting/linting: not established yet; add Prettier and ESLint when the broader TypeScript workspace is introduced.
 
@@ -116,14 +118,14 @@ The backend, frontend foundation, local persistence, and client-crypto primitive
 
 1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Frontend, backend, and crypto workspaces and tests are complete; a shared package, linting, and formatting remain.
 2. Define shared domain types and validation schemas for users, workspaces, members, notes, versions, sync operations, and conflicts.
-3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references. Complete for workspaces, notes, version envelopes, pending operations, and sync metadata; workspace key material remains intentionally absent until wrapping is designed.
-4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, and envelope formats. Complete as the isolated `@cipherspace/crypto` package; frontend and key-sharing integration remain separate tasks.
+3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references. Complete, including user/workspace-scoped protected-key envelopes; raw keys are not persisted.
+4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, envelope formats, and local password protection. Complete for the local-only v1 flow; member/device key sharing remains separate.
 5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
 7. Implement workspace creation and member invitation APIs. Workspace creation and immediate membership of existing users are complete; pending invitations and email delivery remain deferred.
 8. Implement encrypted note CRUD APIs without sync batching. Complete for create, list, detail/latest version, append version, version history, and soft deletion.
 9. Implement local-first note editor flow that persists locally before network sync. Complete for create, edit, tombstone delete, reload durability, cached offline access, and unsynced indicators.
-10. Implement sync operation queue, push/pull endpoints, idempotency, and retry behavior. Complete, with invocation waiting on workspace-key unlock integration.
+10. Implement sync operation queue, push/pull endpoints, idempotency, retry behavior, and manual UI invocation. Complete for explicit user-triggered sync; automatic scheduling is deferred.
 11. Add version-based conflict detection and manual resolution UI. Detection and indicators are complete; resolution UI is deferred.
 12. Add version history UI and restore-from-version behavior.
 13. Add comments after note sync is stable, using the same encrypted-content and version-aware model.
@@ -133,20 +135,20 @@ The backend, frontend foundation, local persistence, and client-crypto primitive
 ## Known Limitations
 
 - Initial authentication still requires the API. After a user has been verified once, the cached profile can reopen that user's local workspace/note data during an outage; this does not establish server authorization.
-- Local note titles and bodies are plaintext in the browser's IndexedDB and remain after logout. At-rest encryption, a lock/unlock flow, and local-data cleanup controls are not implemented.
-- The sync engine encrypts pending payloads through `@cipherspace/crypto`, but the local editor still stores plaintext drafts and no production key provider invokes sync from the UI.
+- Local note titles and bodies are plaintext in the browser's IndexedDB and remain after logout. Workspace lock protects only the persisted content key; it does not encrypt drafts or provide local-data cleanup.
+- The sync engine encrypts pending payloads through `@cipherspace/crypto`, and the manual workspace action invokes it only while the local key is unlocked.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
 - Authorization is implemented for workspace, membership, note, note-version, and sync endpoints. Non-members receive workspace-not-found responses.
-- Push/pull, retry state, cursor advancement, idempotency, and conflict detection are implemented. Automatic scheduling and conflict resolution are not.
-- Client encryption primitives are connected to sync preparation but not to a production workspace-key unlock flow. The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
-- Workspace key creation during workspace setup, secure key persistence, key wrapping and member sharing, passphrase-based unlock, recovery, rotation, revocation, and cryptographic deletion are not implemented. Raw key exports must not be persisted or transmitted unwrapped.
+- Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, and manual sync are implemented. Automatic scheduling and conflict resolution are not.
+- The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
+- The protected key is available only in the browser profile where it was created. There is no recovery, multi-user/device key sharing, account-password integration, parameter migration, rotation, revocation, or cryptographic deletion. Losing the local unlock password or browser data can make remote ciphertext unrecoverable.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - Server change events and idempotency outcomes are durable. Pull cursors and conflict records are device-local in IndexedDB rather than server cursor/conflict tables.
 - Pending invitations, email delivery, comments, conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
-- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata.
+- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
 - Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
