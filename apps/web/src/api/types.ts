@@ -70,3 +70,63 @@ export interface Credentials {
   email: string;
   password: string;
 }
+
+export type SyncOperationType = "create_note" | "delete_note" | "update_note";
+
+export interface SyncEncryptedPayload {
+  algorithm: "AES-GCM";
+  ciphertext: string;
+  envelopeVersion: 1;
+  keyVersion: number;
+  nonce: string;
+}
+
+export interface SyncPushChange {
+  baseVersionId: string | null;
+  clientRevision: number;
+  createdAtClient: string;
+  encryptedPayload: SyncEncryptedPayload | null;
+  noteId: string;
+  operationId: string;
+  operationType: SyncOperationType;
+}
+
+export type SyncPushResult =
+  | {
+      note: EncryptedNote;
+      operationId: string;
+      originalStatus?: "accepted";
+      status: "accepted" | "duplicate";
+      version: NoteVersion;
+    }
+  | {
+      note: EncryptedNote;
+      operationId: string;
+      originalStatus?: "conflict";
+      remoteVersion: NoteVersion;
+      status: "conflict" | "duplicate";
+    }
+  | {
+      errorCode: "idempotency_key_reused" | "note_not_found" | "write_forbidden";
+      operationId: string;
+      status: "rejected";
+    };
+
+export interface SyncPushResponse {
+  results: SyncPushResult[];
+  workspaceId: string;
+}
+
+export interface SyncPullChange {
+  changeId: string;
+  note: EncryptedNote;
+  operationType: "delete_note" | "upsert_note_version";
+  version: NoteVersion;
+}
+
+export interface SyncPullResponse {
+  changes: SyncPullChange[];
+  hasMore: boolean;
+  nextCursor: string;
+  workspaceId: string;
+}

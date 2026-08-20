@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, server-side storage for encrypted notes and immutable note versions, and an isolated client-side crypto package.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, encrypted immutable note versions, an isolated client crypto package, and the first push/pull note sync protocol.
 
 ## Prerequisites
 
@@ -71,9 +71,9 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
-The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, and a local-first note editor. Workspaces, notes, cached encrypted versions, pending changes, and reserved sync metadata are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays an unsynced indicator.
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, and a local-first note editor. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflicts are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators.
 
-The local editor does **not** encrypt or upload its payload yet. Titles and bodies are plaintext in the browser profile's IndexedDB, including after logout, and pending changes wait for a future crypto-and-sync step. Do not treat this implementation as encrypted at-rest storage.
+The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext. It requires an unlocked workspace `CryptoKey` from its caller. Secure key creation, persistence, member sharing, and unlock are not implemented, so the current React UI does not trigger sync automatically. Titles and bodies remain plaintext in the browser profile's IndexedDB, including after logout. Do not treat this implementation as encrypted at-rest storage.
 
 ## Manual frontend check
 
@@ -175,7 +175,7 @@ Non-members receive `404` for workspace-scoped reads so the API does not disclos
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption, but it is not connected to the local editor or pending queue yet. Key persistence, wrapping, and sharing are not implemented.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation and authenticated note encryption/decryption and is used by sync preparation. Key persistence, wrapping, sharing, and UI unlock are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -219,6 +219,26 @@ Supported note endpoints are:
 
 All endpoints require authentication. Workspace members may read active notes and version history. Owners and editors may create notes and append versions. Only owners may soft-delete notes. Non-members receive `404`; viewers receive `403` for mutations. Soft-deleted notes and their versions remain stored but are excluded from normal note reads, lists, and version-history responses.
 
+## Encrypted note sync API
+
+The first sync protocol adds:
+
+- `POST /api/workspaces/:workspaceId/sync/push`
+- `GET /api/workspaces/:workspaceId/sync/pull?cursor=<opaque>`
+
+Push accepts encrypted `create_note`, `update_note`, and `delete_note` operations. The durable client `operationId` is the idempotency key. Updates and deletes must name the server version they were based on; a stale base returns a conflict and does not create a version. Replaying the same operation returns `duplicate` with the original result.
+
+Pull returns at most 500 ordered `upsert_note_version` or `delete_note` events and an opaque workspace-scoped `nextCursor`. The client applies a page and advances its IndexedDB cursor atomically. Remote data never overwrites an unsynced draft; a divergent version creates a local conflict record instead.
+
+The backend routes can be checked manually with an authenticated cookie jar and a real envelope generated by `@cipherspace/crypto`. The focused automated checks are the quickest complete protocol exercise:
+
+```powershell
+npm run test --workspace @cipherspace/api -- sync.test.ts
+npm run test --workspace @cipherspace/web -- src/sync/engine.test.ts
+```
+
+See `docs/SYNC_PROTOCOL.md` for the exact request/response shapes, cursor rules, retry states, and conflict representation.
+
 ## Database migrations
 
 Migrations are ordered SQL files in `apps/api/migrations`. Apply pending migrations with:
@@ -242,5 +262,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, durable local note storage and pending queue, backend foundation, user authentication, workspaces, membership roles, encrypted-note/version APIs, and isolated client encryption primitives are implemented. Frontend encryption integration, queue processing, push/pull sync, conflicts, comments, pending invitations, email delivery, and key sharing remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, push/pull transport, idempotency, cursor persistence, retry state, and conflict detection are implemented. Production key unlock/sharing, automatic sync invocation, conflict resolution, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

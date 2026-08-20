@@ -106,8 +106,8 @@ Initial API areas:
 - `DELETE /api/workspaces/:workspaceId/notes/:noteId` (implemented as a soft delete)
 - `POST /workspaces/:workspaceId/invitations`
 - `POST /invitations/:invitationId/accept`
-- `POST /sync/push`
-- `POST /sync/pull`
+- `POST /api/workspaces/:workspaceId/sync/push` (implemented)
+- `GET /api/workspaces/:workspaceId/sync/pull` (implemented)
 - `POST /conflicts/:conflictId/resolve`
 
 API rules:
@@ -140,6 +140,8 @@ Defer comments UI until notes and sync are stable.
 Local development uses Vite's same-origin `/api` proxy. The Docker web container serves the built single-page application through Nginx and proxies `/api` to the API service. This avoids adding cross-origin credential handling to the backend for the initial frontend slice.
 
 The note UI now creates, edits, and soft-deletes local notes without waiting for the API. Successful API reads refresh workspace, note metadata, and latest-version envelope caches. When the API is unavailable, cached workspace and note screens remain usable and every local mutation is committed atomically with its pending change. The browser caches the last verified user profile, but never the HTTP-only session token, so user-scoped local data can be reopened during a network outage.
+
+The client sync domain now prepares encrypted pending operations through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and explicit conflict snapshots remain in IndexedDB. The engine accepts an unlocked workspace key from its caller; the React application does not yet have the key-management and unlock flow needed to invoke it automatically.
 
 This slice intentionally stores local editor payloads as plaintext structured-clone values because workspace key creation, wrapping, unlock, and recovery are not designed yet. Pending payloads must pass through `@cipherspace/crypto` before any future upload; the queue is not an authorization to send plaintext to the backend.
 
@@ -184,17 +186,18 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 
 ## Implemented Local Storage
 
-`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 1 contains:
+`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 2 contains:
 
 - `workspaces`: workspace metadata and the current user's cached role.
 - `notes`: stable note identity, local title/body payload, tombstone, local revision, base version, and server-visible note metadata.
 - `note_versions`: cached immutable encrypted server envelopes and their version metadata.
 - `pending_changes`: durable `create_note`, `update_note`, and `delete_note` mutations.
-- `local_sync_metadata`: reserved per-workspace pull cursor and last-successful-sync timestamp fields. No code advances them yet.
+- `local_sync_metadata`: per-workspace client ID, opaque pull cursor, last-successful-sync timestamp, and last sync error.
+- `conflicts`: unresolved local/base/remote snapshots created by push or pull conflict detection.
 
 Note mutations and their pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest payload, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
 
-API reads populate caches but do not overwrite a locally revised payload or tombstone. The UI observes Dexie queries and surfaces per-note and per-workspace unsynced counts. No queue processor, retry loop, push/pull transport, cursor advancement, or conflict behavior exists in this slice.
+API reads and sync pulls populate caches but do not overwrite an unsynced local payload or tombstone. The UI observes Dexie queries and surfaces per-note and per-workspace unsynced and conflict counts. Queue attempts persist `pending`, `syncing`, `failed`, `conflict`, or `synced` state with attempt timestamps and errors.
 
 Sensitive local storage rules:
 
@@ -220,4 +223,7 @@ Sensitive local storage rules:
 - Use the platform Web Crypto API through the isolated `@cipherspace/crypto` package for AES-256-GCM note encryption. Version 1 envelopes use random 96-bit nonces, 128-bit tags, canonical base64, envelope version 1, and workspace key version 1.
 - Keep raw workspace keys in caller-managed memory. Raw key import/export supports future wrapping but is not a persistence or sharing design.
 - Scope IndexedDB records by user ID and commit local note state and its pending mutation atomically.
-- Treat the local database as the editing source of truth; remote reads refresh caches, but no network mutation is attempted by the local note editor yet.
+- Treat the local database as the editing source of truth; sync transport reads durable pending operations rather than submitting directly from editor forms.
+- Use workspace-scoped sync routes, client operation UUIDs plus request fingerprints for idempotency, and opaque sequence cursors for resumable pulls.
+- Push dependent operations sequentially so a locally created note can receive a server base before later updates or deletion are submitted.
+- Commit each pulled page and its new cursor atomically; represent divergent base versions as unresolved local conflicts without overwriting drafts.

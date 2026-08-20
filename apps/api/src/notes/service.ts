@@ -130,6 +130,7 @@ export class NoteService {
         ? Buffer.from(data.encryptedTitleNonce, "base64")
         : null,
       id: randomUUID(),
+      syncChangeId: randomUUID(),
       userId,
       version: storedVersion(userId, data),
       workspaceId
@@ -167,6 +168,7 @@ export class NoteService {
     await this.requireWriteAccess(workspaceId, userId);
     const version = await this.repository.appendVersion({
       noteId,
+      syncChangeId: randomUUID(),
       version: storedVersion(userId, data),
       workspaceId
     });
@@ -191,7 +193,7 @@ export class NoteService {
 
   public async deleteNote(workspaceId: string, noteId: string, userId: string): Promise<void> {
     await this.requireOwnerAccess(workspaceId, userId);
-    if (!(await this.repository.softDeleteNote(workspaceId, noteId, userId))) {
+    if (!(await this.repository.softDeleteNote(workspaceId, noteId, userId, randomUUID()))) {
       throw new NoteNotFoundError();
     }
   }

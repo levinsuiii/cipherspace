@@ -3,6 +3,9 @@ import type {
   Credentials,
   EncryptedNote,
   EncryptedNoteDetail,
+  SyncPullResponse,
+  SyncPushChange,
+  SyncPushResponse,
   User,
   Workspace,
   WorkspaceMember
@@ -105,5 +108,16 @@ export const api = {
       ),
     list: (workspaceId: string) =>
       request<{ notes: EncryptedNote[] }>(`${workspacePath(workspaceId)}/notes`)
+  },
+  sync: {
+    pull: (workspaceId: string, cursor: string | null) => {
+      const query = cursor === null ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+      return request<SyncPullResponse>(`${workspacePath(workspaceId)}/sync/pull${query}`);
+    },
+    push: (workspaceId: string, clientId: string, changes: SyncPushChange[]) =>
+      request<SyncPushResponse>(`${workspacePath(workspaceId)}/sync/push`, {
+        body: JSON.stringify({ changes, clientId }),
+        method: "POST"
+      })
   }
 };

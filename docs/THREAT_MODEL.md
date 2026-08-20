@@ -8,7 +8,7 @@ The backend now provides email/password account registration, database-backed se
 
 Note routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package now generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note content with 128-bit authentication tags, and validates versioned envelopes. Fixed envelope metadata is authenticated as additional data. Wrong keys, tampered ciphertext, and malformed payloads fail without returning plaintext.
 
-The frontend is not connected to these primitives yet. The local-first editor now stores user-scoped plaintext title/body drafts in IndexedDB and durable pending local payloads, but it never uploads them. Workspace and encrypted server-envelope metadata are cached separately. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, encrypted local drafts, and sync remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext. Current cryptographic guarantees therefore apply only when callers use the crypto package correctly; they do not yet describe an end-to-end product flow.
+The sync engine is connected to these primitives: when its caller supplies an unlocked workspace `CryptoKey`, it serializes the local title/body snapshot, encrypts it through `@cipherspace/crypto`, persists the encrypted prepared operation, and only then constructs a push request. It never falls back to uploading the plaintext draft. The local-first editor still stores user-scoped plaintext title/body drafts in IndexedDB. Workspace key persistence, wrapping, member sharing, unlock, recovery, rotation, revocation, and encrypted local drafts remain unimplemented, so the React UI does not automatically invoke sync. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
 
 The browser stores the last successfully verified user profile in local storage so the matching IndexedDB scope can be reopened when session verification fails because the network is unavailable. It does not store the HTTP-only session token. An explicit 401 response or successful logout clears this profile cache. This offline identity is a local routing/data-selection convenience, not proof of current server authorization.
 
@@ -199,7 +199,7 @@ Member removal:
 
 Conflict overwrite:
 
-- Mitigate with version-based conflict detection and explicit manual resolution.
+- Mitigate with server-side base-version comparison under a note lock, client-side pull checks, and durable conflict snapshots. Manual resolution remains deferred.
 
 ## Security Limitations
 
@@ -217,6 +217,8 @@ Conflict overwrite:
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
 - Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
+- Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
+- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, and unresolved conflict metadata in the browser profile. It does not persist the raw workspace key.
 
 ## Documentation Requirements For Future Changes
 

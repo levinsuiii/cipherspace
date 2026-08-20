@@ -10,7 +10,10 @@ import { NoteService } from "./notes/service.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerNoteRoutes } from "./routes/notes.js";
+import { registerSyncRoutes } from "./routes/sync.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
+import { PostgresSyncRepository, type SyncRepository } from "./sync/repository.js";
+import { SyncService } from "./sync/service.js";
 import {
   PostgresWorkspaceRepository,
   type WorkspaceRepository
@@ -22,6 +25,7 @@ export interface BuildAppOptions {
   database?: Database;
   authRepository?: AuthRepository;
   noteRepository?: NoteRepository;
+  syncRepository?: SyncRepository;
   workspaceRepository?: WorkspaceRepository;
   logger?: boolean;
 }
@@ -41,6 +45,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const workspaceRepository =
     options.workspaceRepository ?? new PostgresWorkspaceRepository(database);
   const noteRepository = options.noteRepository ?? new PostgresNoteRepository(database);
+  const syncRepository = options.syncRepository ?? new PostgresSyncRepository(database);
   const authService = new AuthService(
     authRepository,
     config.SESSION_SECRET,
@@ -48,6 +53,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   );
   const workspaceService = new WorkspaceService(workspaceRepository);
   const noteService = new NoteService(noteRepository, workspaceRepository);
+  const syncService = new SyncService(syncRepository, workspaceRepository);
 
   app.register(cookie);
   app.decorateRequest("authenticatedUser", null);
@@ -57,6 +63,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     secureCookies: config.NODE_ENV === "production"
   });
   registerNoteRoutes(app, { authService, noteService });
+  registerSyncRoutes(app, { authService, syncService });
   registerWorkspaceRoutes(app, { authService, workspaceService });
 
   if (ownsDatabase) {

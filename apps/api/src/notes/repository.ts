@@ -46,6 +46,7 @@ export interface EncryptedVersionInput {
 export interface NoteRepository {
   appendVersion(input: {
     noteId: string;
+    syncChangeId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
   }): Promise<StoredNoteVersion | null>;
@@ -53,6 +54,7 @@ export interface NoteRepository {
     encryptedTitle: Buffer | null;
     encryptedTitleNonce: Buffer | null;
     id: string;
+    syncChangeId: string;
     userId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
@@ -64,7 +66,12 @@ export interface NoteRepository {
   ): Promise<StoredNoteWithLatestVersion | null>;
   listNotes(workspaceId: string, userId: string): Promise<StoredEncryptedNote[]>;
   listVersions(workspaceId: string, noteId: string, userId: string): Promise<StoredNoteVersion[]>;
-  softDeleteNote(workspaceId: string, noteId: string, userId: string): Promise<boolean>;
+  softDeleteNote(
+    workspaceId: string,
+    noteId: string,
+    userId: string,
+    syncChangeId: string
+  ): Promise<boolean>;
 }
 
 interface NoteRow {
@@ -181,6 +188,7 @@ export class PostgresNoteRepository implements NoteRepository {
     encryptedTitle: Buffer | null;
     encryptedTitleNonce: Buffer | null;
     id: string;
+    syncChangeId: string;
     userId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
@@ -219,6 +227,13 @@ export class PostgresNoteRepository implements NoteRepository {
       if (!createdNote) {
         throw new Error("Encrypted note creation did not return a note");
       }
+      await database.query(
+        `INSERT INTO sync_changes (
+           change_id, workspace_id, entity_type, entity_id, change_type, note_version_id,
+           actor_user_id
+         ) VALUES ($1, $2, 'note', $3, 'note.version.created', $4, $5)`,
+        [input.syncChangeId, input.workspaceId, input.id, latestVersion.id, input.userId]
+      );
       return { latestVersion, note: mapNote(createdNote) };
     });
   }
@@ -274,6 +289,7 @@ export class PostgresNoteRepository implements NoteRepository {
 
   public async appendVersion(input: {
     noteId: string;
+    syncChangeId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
   }): Promise<StoredNoteVersion | null> {
@@ -319,6 +335,19 @@ export class PostgresNoteRepository implements NoteRepository {
          WHERE id = $1`,
         [input.noteId, version.id]
       );
+      await database.query(
+        `INSERT INTO sync_changes (
+           change_id, workspace_id, entity_type, entity_id, change_type, note_version_id,
+           actor_user_id
+         ) VALUES ($1, $2, 'note', $3, 'note.version.created', $4, $5)`,
+        [
+          input.syncChangeId,
+          input.workspaceId,
+          input.noteId,
+          version.id,
+          input.version.authorUserId
+        ]
+      );
       return version;
     });
   }
@@ -346,19 +375,31 @@ export class PostgresNoteRepository implements NoteRepository {
   public async softDeleteNote(
     workspaceId: string,
     noteId: string,
-    userId: string
+    userId: string,
+    syncChangeId: string
   ): Promise<boolean> {
-    const result = await this.database.query(
-      `UPDATE encrypted_notes
-       SET deleted_at = now(), updated_at = now()
-       WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL
-         AND EXISTS (
-           SELECT 1 FROM workspace_members
-           WHERE workspace_id = $1 AND user_id = $3 AND role = 'owner'
-         )
-       RETURNING id`,
-      [workspaceId, noteId, userId]
-    );
-    return result.rowCount === 1;
+    return this.database.transaction(async (database) => {
+      const result = await database.query<{ current_version_id: string; id: string }>(
+        `UPDATE encrypted_notes
+         SET deleted_at = now(), updated_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL
+           AND EXISTS (
+             SELECT 1 FROM workspace_members
+             WHERE workspace_id = $1 AND user_id = $3 AND role = 'owner'
+           )
+         RETURNING id, current_version_id`,
+        [workspaceId, noteId, userId]
+      );
+      const deleted = result.rows[0];
+      if (!deleted) return false;
+      await database.query(
+        `INSERT INTO sync_changes (
+           change_id, workspace_id, entity_type, entity_id, change_type, note_version_id,
+           actor_user_id
+         ) VALUES ($1, $2, 'note', $3, 'note.deleted', $4, $5)`,
+        [syncChangeId, workspaceId, noteId, deleted.current_version_id, userId]
+      );
+      return true;
+    });
   }
 }

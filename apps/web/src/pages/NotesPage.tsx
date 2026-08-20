@@ -26,6 +26,10 @@ export function NotesPage() {
     () => localData.listPendingChanges(workspace.id),
     [localData, workspace.id]
   );
+  const conflictsQuery = useLocalQuery(
+    () => localData.listConflicts(workspace.id),
+    [localData, workspace.id]
+  );
   const serverNotesQuery = useQuery({
     queryKey: queryKeys.notes(workspace.id),
     queryFn: async () => {
@@ -38,8 +42,12 @@ export function NotesPage() {
 
   const notes = localNotesQuery.data ?? [];
   const pendingByNote = new Map<string, number>();
+  const conflictsByNote = new Map<string, number>();
   for (const change of pendingChangesQuery.data ?? []) {
     pendingByNote.set(change.note_id, (pendingByNote.get(change.note_id) ?? 0) + 1);
+  }
+  for (const conflict of conflictsQuery.data ?? []) {
+    conflictsByNote.set(conflict.note_id, (conflictsByNote.get(conflict.note_id) ?? 0) + 1);
   }
 
   const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
@@ -67,6 +75,9 @@ export function NotesPage() {
             <h2>Notes</h2>
           </div>
           <div className="status-badges">
+            {(conflictsQuery.data?.length ?? 0) > 0 ? (
+              <span className="conflict-badge">{conflictsQuery.data?.length} conflicts</span>
+            ) : null}
             {(pendingChangesQuery.data?.length ?? 0) > 0 ? (
               <span className="unsynced-badge">{pendingChangesQuery.data?.length} unsynced</span>
             ) : null}
@@ -99,6 +110,7 @@ export function NotesPage() {
               const titleLabel = note.local_note_payload?.title ??
                 shortenOpaqueValue(note.encrypted_title, "Encrypted note");
               const pendingCount = pendingByNote.get(note.id) ?? 0;
+              const conflictCount = conflictsByNote.get(note.id) ?? 0;
               return (
                 <Link key={note.id} to={note.id}>
                   <div className="note-index">{String(index + 1).padStart(2, "0")}</div>
@@ -106,7 +118,9 @@ export function NotesPage() {
                     <h3>{titleLabel}</h3>
                     <p>Updated {formatDate(note.updated_at)}</p>
                   </div>
-                  {pendingCount > 0 ? (
+                  {conflictCount > 0 ? (
+                    <span className="conflict-badge">Conflict</span>
+                  ) : pendingCount > 0 ? (
                     <span className="unsynced-badge">Unsynced</span>
                   ) : (
                     <span className="mono note-id">{note.id.slice(0, 8)}</span>
@@ -125,7 +139,7 @@ export function NotesPage() {
             <h2>Create a local note</h2>
             <div className="info-callout">
               Saving creates a local note and queues a <code>create_note</code> change. Nothing is
-              uploaded in this implementation step.
+              uploaded until sync has access to an unlocked workspace key.
             </div>
             <form className="form-stack" onSubmit={(event) => void handleCreate(event)}>
               <label>

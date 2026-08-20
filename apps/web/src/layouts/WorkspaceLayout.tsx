@@ -22,6 +22,10 @@ export function WorkspaceLayout() {
     () => localData.countPendingChanges(workspaceId),
     [localData, workspaceId]
   );
+  const conflictsQuery = useLocalQuery(
+    () => localData.countConflicts(workspaceId),
+    [localData, workspaceId]
+  );
   const workspaceQuery = useQuery({
     enabled: Boolean(workspaceId),
     queryKey: queryKeys.workspace(workspaceId),
@@ -70,6 +74,9 @@ export function WorkspaceLayout() {
           <h1>{workspace.name}</h1>
         </div>
         <div className="status-badges">
+          {(conflictsQuery.data ?? 0) > 0 ? (
+            <span className="conflict-badge">{conflictsQuery.data} conflicts</span>
+          ) : null}
           {(pendingChangesQuery.data ?? 0) > 0 ? (
             <span className="unsynced-badge">
               {pendingChangesQuery.data} unsynced

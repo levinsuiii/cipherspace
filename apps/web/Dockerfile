@@ -8,6 +8,9 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/crypto/package.json packages/crypto/package.json
 RUN npm ci
 
+COPY tsconfig.base.json ./
+COPY packages/crypto/tsconfig.json packages/crypto/tsconfig.json
+COPY packages/crypto/src packages/crypto/src
 COPY apps/web/tsconfig.json apps/web/tsconfig.json
 COPY apps/web/tsconfig.app.json apps/web/tsconfig.app.json
 COPY apps/web/tsconfig.node.json apps/web/tsconfig.node.json

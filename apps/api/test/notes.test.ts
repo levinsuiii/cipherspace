@@ -86,6 +86,7 @@ class InMemoryNoteRepository implements NoteRepository {
     encryptedTitle: Buffer | null;
     encryptedTitleNonce: Buffer | null;
     id: string;
+    syncChangeId: string;
     userId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
@@ -127,6 +128,7 @@ class InMemoryNoteRepository implements NoteRepository {
 
   public async appendVersion(input: {
     noteId: string;
+    syncChangeId: string;
     version: EncryptedVersionInput;
     workspaceId: string;
   }): Promise<StoredNoteVersion | null> {

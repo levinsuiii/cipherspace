@@ -32,6 +32,10 @@ export function NoteDetailPage() {
     () => localData.countPendingChangesForNote(noteId),
     [localData, noteId]
   );
+  const conflictCountQuery = useLocalQuery(
+    () => localData.countConflictsForNote(noteId),
+    [localData, noteId]
+  );
   const serverNoteQuery = useQuery({
     enabled: Boolean(noteId),
     queryKey: queryKeys.note(workspace.id, noteId),
@@ -70,7 +74,7 @@ export function NoteDetailPage() {
     setIsSaving(true);
     try {
       await localData.editNote(note.id, { body, title: trimmedTitle });
-      setSaveMessage("Saved locally. This change is waiting for future sync.");
+      setSaveMessage("Saved locally. This change is queued for sync.");
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the local note.");
     } finally {
@@ -105,9 +109,11 @@ export function NoteDetailPage() {
         <div>
           <p className="eyebrow">Local note editor</p>
           <h2>{displayTitle}</h2>
-          <p>Every save updates IndexedDB before a future sync attempt can occur.</p>
+          <p>Every save updates IndexedDB before a sync attempt can occur.</p>
         </div>
-        {(pendingCountQuery.data ?? 0) > 0 ? (
+        {(conflictCountQuery.data ?? 0) > 0 ? (
+          <span className="conflict-badge">Conflict detected</span>
+        ) : (pendingCountQuery.data ?? 0) > 0 ? (
           <span className="unsynced-badge">{pendingCountQuery.data} unsynced</span>
         ) : (
           <span className="version-badge">

@@ -1,7 +1,8 @@
 import type { WorkspaceRole } from "../api/types";
+import type { EncryptedNotePayload } from "@cipherspace/crypto";
 
 export type PendingChangeOperation = "create_note" | "update_note" | "delete_note";
-export type PendingChangeStatus = "pending" | "syncing" | "failed" | "synced";
+export type PendingChangeStatus = "conflict" | "failed" | "pending" | "synced" | "syncing";
 
 export interface LocalNotePayload {
   body: string;
@@ -55,10 +56,13 @@ export interface LocalNoteVersion {
 }
 
 export interface PendingChange {
+  attempt_count: number;
   base_version_id: string | null;
   created_at: string;
-  encrypted_payload: string | null;
+  encrypted_payload: EncryptedNotePayload | null;
   id: string;
+  last_attempt_at: string | null;
+  last_error: string | null;
   local_note_payload: LocalNotePayload | null;
   local_revision: number;
   note_id: string;
@@ -70,10 +74,29 @@ export interface PendingChange {
 }
 
 export interface LocalSyncMetadata {
+  client_id: string;
   key: string;
   last_pull_cursor: string | null;
+  last_sync_error: string | null;
   last_successful_sync_at: string | null;
   updated_at: string;
+  user_id: string;
+  workspace_id: string;
+}
+
+export interface LocalConflict {
+  base_version: LocalNoteVersion | null;
+  base_version_id: string | null;
+  detected_at: string;
+  id: string;
+  key: string;
+  local_encrypted_payload: EncryptedNotePayload | null;
+  local_note_payload: LocalNotePayload | null;
+  local_revision: number;
+  note_id: string;
+  pending_change_id: string;
+  remote_version: LocalNoteVersion;
+  status: "unresolved";
   user_id: string;
   workspace_id: string;
 }
