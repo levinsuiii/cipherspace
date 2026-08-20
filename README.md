@@ -73,7 +73,7 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
-The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, and a local-first note editor. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflicts are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators.
+The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, and manual conflict resolution. Workspaces, notes, cached encrypted versions, pending changes, sync cursors, retry state, and conflict history are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators.
 
 The workspace UI now provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. The sync engine encrypts pending create/update snapshots through `@cipherspace/crypto` before transport and never falls back to plaintext.
 
@@ -93,6 +93,42 @@ This v1 key is tied to the current user, workspace, and browser profile. There i
 10. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
 11. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
 12. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
+
+## Manual conflict-resolution check
+
+This flow uses the authenticated browser console to append a second immutable server version that reuses the note's existing encrypted envelope. It simulates another writer without exposing plaintext to the backend and works despite multi-device workspace-key sharing not being implemented yet.
+
+1. Start the app with Docker Compose, log in, open a workspace, create or unlock its local key, create a note, and sync it.
+2. Keep the note page open. Its URL contains the workspace and note IDs.
+3. Open the browser developer console and run the following same-origin snippet. It reads the current encrypted version and appends the same ciphertext as a new server version:
+
+```javascript
+const [, workspaceId, noteId] = location.pathname.match(
+  /\/workspaces\/([^/]+)\/notes\/([^/]+)/
+) ?? [];
+const detail = await fetch(`/api/workspaces/${workspaceId}/notes/${noteId}`).then((response) =>
+  response.json()
+);
+await fetch(`/api/workspaces/${workspaceId}/notes/${noteId}/versions`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    encryptedContent: detail.latestVersion.encryptedContent,
+    contentNonce: detail.latestVersion.contentNonce,
+    encryptionMetadata: detail.latestVersion.encryptionMetadata,
+    clientVersion: "manual-remote-simulation"
+  })
+}).then(async (response) => ({ status: response.status, body: await response.json() }));
+```
+
+4. Without refreshing or pulling first, edit the old local note and save it locally.
+5. Select **Sync**. Confirm the server rejects the stale `baseVersionId`, sync status becomes `conflict`, the conflict count appears, and the local edit remains visible.
+6. Open the note or its conflict badge. Confirm the resolution view shows the local snapshot, decrypted remote/server snapshot, remote metadata, and cached base-version metadata.
+7. Select **Keep local**. Confirm the conflict count clears, exactly one resolved change remains unsynced, and **Sync** successfully creates the next immutable server version.
+8. Repeat steps 3–6 and select **Accept remote**. Confirm the explicitly selected remote content becomes the new local resolved draft, then sync it.
+9. Repeat steps 3–6, edit the title/body in **Manual merge**, and select **Save manual merge**. Confirm the merged draft becomes the single unsynced resolved change, then sync it.
+
+Conflict snapshots remain in IndexedDB as resolved history. The original conflicted queue entries are retired rather than silently retried, and every resolution is based on the selected remote version before it can be encrypted and pushed.
 
 ## Authentication
 
@@ -235,7 +271,7 @@ The first sync protocol adds:
 
 Push accepts encrypted `create_note`, `update_note`, and `delete_note` operations. The durable client `operationId` is the idempotency key. Updates and deletes must name the server version they were based on; a stale base returns a conflict and does not create a version. Replaying the same operation returns `duplicate` with the original result.
 
-Pull returns at most 500 ordered `upsert_note_version` or `delete_note` events and an opaque workspace-scoped `nextCursor`. The client applies a page and advances its IndexedDB cursor atomically. Remote data never overwrites an unsynced draft; a divergent version creates a local conflict record instead.
+Pull returns at most 500 ordered `upsert_note_version` or `delete_note` events and an opaque workspace-scoped `nextCursor`. The client applies a page and advances its IndexedDB cursor atomically. Remote data never overwrites an unsynced draft; a divergent version creates a local conflict record instead. The conflict view decrypts the cached remote envelope only after the workspace is unlocked. **Keep local**, **Accept remote**, and **Manual merge** each retire the conflicted queue entries and create one new pending update based on the remote version. The existing encrypted sync path then creates the immutable resolved server version.
 
 The backend routes can be checked manually with an authenticated cookie jar and a real envelope generated by `@cipherspace/crypto`. The focused automated checks are the quickest complete protocol exercise:
 
@@ -269,5 +305,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, and conflict detection are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, conflict resolution, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The frontend foundation, durable local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, comments, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

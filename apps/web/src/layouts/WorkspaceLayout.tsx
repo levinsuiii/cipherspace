@@ -104,6 +104,7 @@ export function WorkspaceLayout() {
         </div>
       </header>
       <WorkspaceSyncControls
+        conflictCount={conflictsQuery.data ?? 0}
         keyStatus={workspaceKey.status}
         onCreateKey={workspaceKey.create}
         onLock={workspaceKey.lock}

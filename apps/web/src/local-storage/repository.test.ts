@@ -2,9 +2,47 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CipherSpaceLocalDatabase } from "./database";
 import { LocalNotesRepository } from "./repository";
+import type { LocalNotePayload } from "./types";
 
 const userId = "00000000-0000-4000-8000-000000000001";
 const workspaceId = "00000000-0000-4000-8000-000000000002";
+const remoteUserId = "00000000-0000-4000-8000-000000000003";
+const noteId = "00000000-0000-4000-8000-000000000004";
+const baseVersionId = "00000000-0000-4000-8000-000000000005";
+const remoteVersionId = "00000000-0000-4000-8000-000000000006";
+
+function serverVersion(id: string, versionNumber: number, parentVersionId: string | null) {
+  return {
+    clientVersion: String(versionNumber),
+    contentNonce: "AAAAAAAAAAAAAAAA",
+    createdAt: `2026-08-20T10:0${versionNumber}:00.000Z`,
+    createdBy: versionNumber === 1 ? userId : remoteUserId,
+    encryptedContent: "AAAAAAAAAAAAAAAAAAAAAA==",
+    encryptionMetadata: {
+      algorithm: "AES-GCM",
+      envelopeVersion: 1,
+      keyId: "workspace-key-v1"
+    },
+    id,
+    noteId,
+    parentVersionId,
+    versionNumber
+  };
+}
+
+function serverNote(latestVersionId: string) {
+  return {
+    createdAt: "2026-08-20T10:00:00.000Z",
+    createdBy: userId,
+    deletedAt: null,
+    encryptedTitle: null,
+    encryptedTitleNonce: null,
+    id: noteId,
+    latestVersionId,
+    updatedAt: "2026-08-20T10:02:00.000Z",
+    workspaceId
+  };
+}
 
 function idSequence(): () => string {
   let next = 10;
@@ -28,6 +66,25 @@ describe("LocalNotesRepository", () => {
   afterEach(async () => {
     await database.delete();
   });
+
+  async function createEditConflict(localPayload: LocalNotePayload) {
+    await repository.cacheServerNoteDetail({
+      latestVersion: serverVersion(baseVersionId, 1, null),
+      note: serverNote(baseVersionId)
+    });
+    await repository.editNote(noteId, localPayload);
+    const pending = (await repository.listPendingChanges(workspaceId))[0]!;
+    const attempted = await repository.beginSyncAttempt([pending]);
+    await repository.applyPushResults(workspaceId, attempted, [
+      {
+        note: serverNote(remoteVersionId),
+        operationId: pending.id,
+        remoteVersion: serverVersion(remoteVersionId, 2, baseVersionId),
+        status: "conflict"
+      }
+    ]);
+    return (await repository.listConflicts(workspaceId))[0]!;
+  }
 
   it("creates a durable local note and a pending create operation atomically", async () => {
     const note = await repository.createNote(workspaceId, {
@@ -151,5 +208,60 @@ describe("LocalNotesRepository", () => {
 
     await expect(repository.listNotes(workspaceId)).resolves.toEqual([]);
     await expect(repository.listPendingChanges(workspaceId)).resolves.toEqual([]);
+  });
+
+  it.each([
+    {
+      expected: { body: "local body", title: "Local title" },
+      input: { action: "keep_local" } as const,
+      label: "keep-local"
+    },
+    {
+      expected: { body: "remote body", title: "Remote title" },
+      input: {
+        action: "accept_remote",
+        remote_payload: { body: "remote body", title: "Remote title" }
+      } as const,
+      label: "accept-remote"
+    },
+    {
+      expected: { body: "merged body", title: "Merged title" },
+      input: {
+        action: "manual_merge",
+        merged_payload: { body: "merged body", title: "Merged title" }
+      } as const,
+      label: "manual-merge"
+    }
+  ])("creates one rebased pending version for $label resolution", async ({ expected, input }) => {
+    const conflict = await createEditConflict({ body: "local body", title: "Local title" });
+
+    const resolvedChange = await repository.resolveConflict(conflict.id, input);
+
+    await expect(repository.getNote(noteId)).resolves.toMatchObject({
+      base_version_id: remoteVersionId,
+      local_note_payload: expected,
+      local_revision: 2
+    });
+    await expect(repository.countConflicts(workspaceId)).resolves.toBe(0);
+    await expect(repository.listPendingChanges(workspaceId)).resolves.toEqual([
+      expect.objectContaining({
+        base_version_id: remoteVersionId,
+        id: resolvedChange.id,
+        local_note_payload: expected,
+        operation_type: "update_note",
+        status: "pending"
+      })
+    ]);
+    const storedConflict = await database.conflicts.get(conflict.key);
+    expect(storedConflict).toMatchObject({
+      resolution: input.action,
+      resolution_pending_change_id: resolvedChange.id,
+      resolved_at: "2026-08-20T10:00:00.000Z",
+      resolved_note_payload: expected,
+      status: "resolved"
+    });
+    await expect(database.pending_changes.get(conflict.pending_change_id)).resolves.toMatchObject({
+      status: "resolved"
+    });
   });
 });

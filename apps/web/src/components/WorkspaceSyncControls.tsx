@@ -7,9 +7,10 @@ import {
 } from "../key-management/WorkspaceKeyContext";
 import type { SyncSummary } from "../sync/engine";
 
-type SyncStatus = "failed" | "idle" | "locked" | "synced" | "syncing";
+type SyncStatus = "conflict" | "failed" | "idle" | "locked" | "synced" | "syncing";
 
 interface WorkspaceSyncControlsProps {
+  conflictCount: number;
   keyStatus: WorkspaceKeyStatus;
   onCreateKey(passphrase: string): Promise<void>;
   onLock(): void;
@@ -28,6 +29,7 @@ function errorMessage(error: unknown): string {
 }
 
 export function WorkspaceSyncControls({
+  conflictCount,
   keyStatus,
   onCreateKey,
   onLock,
@@ -46,7 +48,8 @@ export function WorkspaceSyncControls({
 
   useEffect(() => {
     if (pendingCount > 0 && syncStatus === "synced") setSyncStatus("idle");
-  }, [pendingCount, syncStatus]);
+    if (conflictCount === 0 && syncStatus === "conflict") setSyncStatus("idle");
+  }, [conflictCount, pendingCount, syncStatus]);
 
   const handleKeySubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -73,8 +76,8 @@ export function WorkspaceSyncControls({
     setError(null);
     setSyncStatus("syncing");
     try {
-      await onSync();
-      setSyncStatus("synced");
+      const summary = await onSync();
+      setSyncStatus(summary.conflicts > 0 ? "conflict" : "synced");
     } catch (caught) {
       setError(errorMessage(caught));
       setSyncStatus(caught instanceof WorkspaceLockedError ? "locked" : "failed");
@@ -97,6 +100,8 @@ export function WorkspaceSyncControls({
               ? "Unlock the local workspace key to encrypt and sync pending notes."
               : keyStatus === "checking"
                 ? "Checking this device for a protected workspace key…"
+                : conflictCount > 0
+                  ? `${conflictCount} conflict${conflictCount === 1 ? " needs" : "s need"} manual resolution.`
                 : pendingCount > 0
                   ? `${pendingCount} local change${pendingCount === 1 ? "" : "s"} ready to sync.`
                   : "Local changes are synced. You can also pull remote updates manually."}

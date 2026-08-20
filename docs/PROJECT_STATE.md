@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, an isolated client crypto package, durable local-first storage, the first encrypted-note push/pull protocol, and a minimal local-only workspace-key unlock plus manual sync flow. Multi-user key sharing, recovery, rotation, and conflict resolution remain separate future work.
+CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, an isolated client crypto package, durable local-first storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, and manual note-edit conflict resolution. Multi-user key sharing, recovery, rotation, and automatic merging remain separate future work.
 
 ## Current Status
 
@@ -12,14 +12,17 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Owners and editors can create and edit local notes; owners can add local tombstones. Viewers remain read-only. These local actions do not call the direct encrypted-note API.
 - The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
 - Frontend tests verify cookie credential handling, structured error propagation, and live auth-state cleanup on logout.
-- `apps/web/src/local-storage` implements a user-scoped Dexie/IndexedDB database for workspace metadata, notes and local drafts, cached encrypted versions, pending changes, per-workspace sync metadata, and unresolved conflicts.
+- `apps/web/src/local-storage` implements a user-scoped Dexie/IndexedDB database for workspace metadata, notes and local drafts, cached encrypted versions, pending changes, per-workspace sync metadata, and unresolved/resolved conflict history.
 - Owners and editors can create and edit notes locally without an API mutation. Owners can soft-delete local notes. Every mutation atomically persists the note and a pending `create_note`, `update_note`, or `delete_note` record before the UI reports success.
 - Local notes, tombstones, local revisions, and pending changes survive browser reloads. Repeated edits coalesce into the existing pending update operation.
 - Workspace and note pages use the local database as their durable display source and refresh caches from successful API reads. Cached pages remain editable when those API reads fail.
 - Note and workspace surfaces show unsynced and conflict badges based on durable local records.
+- Conflict badges open a dedicated resolution view showing the preserved local snapshot, the client-decrypted remote snapshot, and remote/base version metadata.
+- Keep-local, accept-remote, and manual-merge actions atomically preserve resolution history, retire conflicting queue entries, rebase one new local version to the remote version, and leave it pending for encrypted sync.
+- Editing is paused on an unresolved note conflict so users choose a resolution before creating more ordinary edits. Sync status reports `conflict` until the unresolved count clears.
 - A typed client sync engine encrypts queued create/update snapshots through `@cipherspace/crypto`, pushes dependent operations in order, pulls validated remote pages, persists opaque cursors, and safely records failures.
 - The workspace UI creates a random workspace key, protects it locally under a separate unlock password, unlocks it after reload, and supplies the in-memory key to the sync engine.
-- An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `failed`, or `locked`. Dexie live queries update the unsynced count after accepted operations are marked `synced`.
+- An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`. Dexie live queries update unsynced and conflict counts after sync or resolution state transitions.
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
 - Local storage tests use `fake-indexeddb` and cover creation, editing, pending change representation, database reopen/reload durability, tombstone deletion, protected-key persistence, and unlock after database reopen.
 - `GET /health` checks PostgreSQL connectivity and returns `200` when the database is reachable or `503` when it is unavailable.
@@ -48,7 +51,7 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - The backend validates UUIDs, strict request shapes, base64 encoding, envelope metadata, and decoded ciphertext/nonce size limits without decrypting or interpreting note data.
 - Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Sync route tests cover accepted push, pull, opaque cursor continuation, repeated-push idempotency, stale-base conflict detection, and non-member denial.
-- Frontend sync tests cover crypto-package preparation, successful status transition, cursor persistence across database reopen, safe retry metadata, conflict snapshots, and protection of unsynced drafts during pull.
+- Frontend sync tests cover crypto-package preparation, successful status transition, cursor persistence across database reopen, safe retry metadata, conflict snapshots, protection of unsynced drafts during pull, all three resolution choices, remote snapshot decryption, and successful sync of a resolved version.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 - `packages/crypto` contains browser-compatible TypeScript wrappers around the platform Web Crypto API and has no runtime dependencies.
 - The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces, encrypts and decrypts UTF-8 note content with 128-bit authentication tags, and serializes strict version 1 envelopes as canonical base64.
@@ -126,7 +129,7 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 8. Implement encrypted note CRUD APIs without sync batching. Complete for create, list, detail/latest version, append version, version history, and soft deletion.
 9. Implement local-first note editor flow that persists locally before network sync. Complete for create, edit, tombstone delete, reload durability, cached offline access, and unsynced indicators.
 10. Implement sync operation queue, push/pull endpoints, idempotency, retry behavior, and manual UI invocation. Complete for explicit user-triggered sync; automatic scheduling is deferred.
-11. Add version-based conflict detection and manual resolution UI. Detection and indicators are complete; resolution UI is deferred.
+11. Add version-based conflict detection and manual resolution UI. Complete for note-edit conflicts, including keep local, accept remote, manual merge, preserved resolution metadata, and resolved-version sync.
 12. Add version history UI and restore-from-version behavior.
 13. Add comments after note sync is stable, using the same encrypted-content and version-aware model.
 14. Add end-to-end tests for authentication, offline edit durability, sync, conflicts, and access control.
@@ -141,14 +144,14 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
 - Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
 - Authorization is implemented for workspace, membership, note, note-version, and sync endpoints. Non-members receive workspace-not-found responses.
-- Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, and manual sync are implemented. Automatic scheduling and conflict resolution are not.
+- Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
 - The protected key is available only in the browser profile where it was created. There is no recovery, multi-user/device key sharing, account-password integration, parameter migration, rotation, revocation, or cryptographic deletion. Losing the local unlock password or browser data can make remote ciphertext unrecoverable.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - Server change events and idempotency outcomes are durable. Pull cursors and conflict records are device-local in IndexedDB rather than server cursor/conflict tables.
-- Pending invitations, email delivery, comments, conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
-- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes.
+- Pending invitations, email delivery, comments, delete-conflict resolution, and key shares remain planned. Adding a member currently requires an existing account and takes effect immediately.
+- Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds resolved status, action, timestamp, payload, and replacement-operation metadata while retaining the original conflict snapshots.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
 - Authentication has automated behavior coverage but has not received an independent security review. Planned encryption and collaboration security properties remain unimplemented.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.

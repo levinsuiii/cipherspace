@@ -278,4 +278,79 @@ describe("NoteSyncEngine", () => {
       last_sync_error: "network unavailable"
     });
   });
+
+  it("syncs a manually resolved conflict as a new version based on the remote version", async () => {
+    await repository.cacheServerNoteDetail(detail());
+    await repository.editNote(ids.note, { body: "my edit", title: "Local" });
+    const remoteVersion = version(ids.version2, 2, ids.version1);
+    const firstTransport: SyncTransport = {
+      pull: vi.fn(async (): Promise<SyncPullResponse> => ({
+        changes: [],
+        hasMore: false,
+        nextCursor: "cursor-at-conflict",
+        workspaceId: ids.workspace
+      })),
+      push: vi.fn(async (_workspaceId, _clientId, changes): Promise<SyncPushResponse> => ({
+        results: [{
+          note: note(ids.version2),
+          operationId: changes[0]!.operationId,
+          remoteVersion,
+          status: "conflict"
+        }],
+        workspaceId: ids.workspace
+      }))
+    };
+    const workspaceKey = await generateWorkspaceKey();
+    const firstSync = new NoteSyncEngine(repository, firstTransport, {
+      getWorkspaceKey: async () => workspaceKey
+    });
+    await firstSync.syncWorkspace(ids.workspace);
+    const conflict = (await repository.listConflicts(ids.workspace))[0]!;
+    await repository.resolveConflict(conflict.id, { action: "keep_local" });
+
+    let resolvedWireChange: SyncPushChange | undefined;
+    const version3 = version(
+      "50000000-0000-4000-8000-000000000003",
+      3,
+      ids.version2
+    );
+    const secondTransport: SyncTransport = {
+      pull: vi.fn(async (): Promise<SyncPullResponse> => ({
+        changes: [],
+        hasMore: false,
+        nextCursor: "cursor-after-resolution",
+        workspaceId: ids.workspace
+      })),
+      push: vi.fn(async (_workspaceId, _clientId, changes): Promise<SyncPushResponse> => {
+        resolvedWireChange = changes[0];
+        return {
+          results: [{
+            note: note(version3.id),
+            operationId: changes[0]!.operationId,
+            status: "accepted",
+            version: version3
+          }],
+          workspaceId: ids.workspace
+        };
+      })
+    };
+    const secondSync = new NoteSyncEngine(repository, secondTransport, {
+      getWorkspaceKey: async () => workspaceKey
+    });
+
+    await expect(secondSync.syncWorkspace(ids.workspace)).resolves.toMatchObject({
+      conflicts: 0,
+      pushed: 1
+    });
+    expect(resolvedWireChange).toMatchObject({
+      baseVersionId: ids.version2,
+      operationType: "update_note"
+    });
+    expect(resolvedWireChange?.encryptedPayload).not.toBeNull();
+    await expect(repository.listPendingChanges(ids.workspace)).resolves.toEqual([]);
+    await expect(repository.getNote(ids.note)).resolves.toMatchObject({
+      base_version_id: version3.id,
+      local_note_payload: { body: "my edit", title: "Local" }
+    });
+  });
 });

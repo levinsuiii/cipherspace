@@ -7,6 +7,7 @@ afterEach(cleanup);
 
 function props() {
   return {
+    conflictCount: 0,
     keyStatus: "unlocked" as const,
     onCreateKey: vi.fn(async () => undefined),
     onLock: vi.fn(),
@@ -59,5 +60,18 @@ describe("WorkspaceSyncControls", () => {
     rerender(<WorkspaceSyncControls {...rejected} />);
     fireEvent.click(screen.getByRole("button", { name: "Sync" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The response was invalid.");
+  });
+
+  it("reports a detected conflict until the conflict count is resolved", async () => {
+    const controls = props();
+    controls.onSync.mockResolvedValueOnce({ conflicts: 1, pulled: 1, pushed: 0 });
+    const { rerender } = render(<WorkspaceSyncControls {...controls} conflictCount={1} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+    expect(await screen.findByText("conflict")).toBeInTheDocument();
+    expect(screen.getByText("1 conflict needs manual resolution.")).toBeInTheDocument();
+
+    rerender(<WorkspaceSyncControls {...controls} conflictCount={0} pendingCount={1} />);
+    await waitFor(() => expect(screen.getByText("idle")).toBeInTheDocument());
   });
 });

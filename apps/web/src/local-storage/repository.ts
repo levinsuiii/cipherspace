@@ -8,6 +8,7 @@ import type {
 } from "../api/types";
 import type { CipherSpaceLocalDatabase } from "./database";
 import type {
+  ConflictResolutionInput,
   LocalConflict,
   LocalNote,
   LocalNotePayload,
@@ -29,6 +30,10 @@ const maxLocalTitleLength = 200;
 
 function scopedKey(userId: string, id: string): string {
   return `${userId}:${id}`;
+}
+
+function isOutstandingChange(change: PendingChange): boolean {
+  return change.status !== "resolved" && change.status !== "synced";
 }
 
 export class LocalNotesRepository {
@@ -234,7 +239,7 @@ export class LocalNotesRepository {
           .toArray()
       : await this.database.pending_changes.where("user_id").equals(this.userId).toArray();
     return changes
-      .filter((change) => change.status !== "synced")
+      .filter(isOutstandingChange)
       .sort((left, right) =>
         left.created_at === right.created_at
           ? left.local_revision - right.local_revision
@@ -402,7 +407,7 @@ export class LocalNotesRepository {
               if (
                 descendant.id !== current.id &&
                 descendant.local_revision > current.local_revision &&
-                descendant.status !== "synced" &&
+                isOutstandingChange(descendant) &&
                 descendant.status !== "conflict"
               ) {
                 await this.recordConflict(
@@ -444,7 +449,7 @@ export class LocalNotesRepository {
               .where("[user_id+note_id]")
               .equals([this.userId, change.note.id])
               .toArray()
-          ).filter((item) => item.status !== "synced");
+          ).filter(isOutstandingChange);
 
           if (pending.length > 0) {
             for (const localChange of pending) {
@@ -509,10 +514,136 @@ export class LocalNotesRepository {
   }
 
   public async listConflicts(workspaceId: string): Promise<LocalConflict[]> {
-    return this.database.conflicts
+    const conflicts = await this.database.conflicts
       .where("[user_id+workspace_id]")
       .equals([this.userId, workspaceId])
       .toArray();
+    return conflicts
+      .filter((conflict) => conflict.status === "unresolved")
+      .sort((left, right) =>
+        right.remote_version.version_number - left.remote_version.version_number ||
+        right.detected_at.localeCompare(left.detected_at)
+      );
+  }
+
+  public async getUnresolvedConflictForNote(noteId: string): Promise<LocalConflict | null> {
+    const conflicts = await this.database.conflicts
+      .where("[user_id+note_id]")
+      .equals([this.userId, noteId])
+      .toArray();
+    return conflicts
+      .filter((conflict) => conflict.status === "unresolved")
+      .sort((left, right) =>
+        right.remote_version.version_number - left.remote_version.version_number ||
+        right.detected_at.localeCompare(left.detected_at)
+      )[0] ?? null;
+  }
+
+  public async resolveConflict(
+    conflictId: string,
+    resolution: ConflictResolutionInput
+  ): Promise<PendingChange> {
+    return this.database.transaction(
+      "rw",
+      this.database.notes,
+      this.database.pending_changes,
+      this.database.conflicts,
+      this.database.local_sync_metadata,
+      async () => {
+        const conflict = await this.database.conflicts.get(scopedKey(this.userId, conflictId));
+        if (!conflict || conflict.status !== "unresolved") {
+          throw new Error("The conflict does not exist or has already been resolved.");
+        }
+
+        const latestConflict = await this.getUnresolvedConflictForNote(conflict.note_id);
+        if (latestConflict?.id !== conflict.id) {
+          throw new Error("Resolve the conflict against the latest cached server version.");
+        }
+
+        const note = await this.database.notes.get(scopedKey(this.userId, conflict.note_id));
+        if (!note || note.workspace_id !== conflict.workspace_id) {
+          throw new Error("The conflicted local note could not be found.");
+        }
+
+        const resolvedPayload = resolution.action === "keep_local"
+          ? note.local_note_payload ?? conflict.local_note_payload
+          : resolution.action === "accept_remote"
+            ? resolution.remote_payload
+            : resolution.merged_payload;
+        if (!resolvedPayload) {
+          throw new Error("This conflict does not contain editable local note content.");
+        }
+        this.validateLocalPayload(resolvedPayload);
+
+        const timestamp = this.now();
+        const pending = await this.database.pending_changes
+          .where("[user_id+note_id]")
+          .equals([this.userId, conflict.note_id])
+          .toArray();
+        const nextRevision = Math.max(
+          note.local_revision,
+          ...pending.map((change) => change.local_revision)
+        ) + 1;
+        const resolvedNote: LocalNote = {
+          ...note,
+          base_version_id: conflict.remote_version.id,
+          deleted_at: null,
+          local_note_payload: { ...resolvedPayload },
+          local_revision: nextRevision,
+          updated_at: timestamp
+        };
+        await this.database.notes.put(resolvedNote);
+
+        for (const change of pending) {
+          if (!isOutstandingChange(change)) continue;
+          await this.database.pending_changes.put({
+            ...change,
+            last_error: null,
+            status: "resolved",
+            updated_at: timestamp
+          });
+        }
+
+        const resolvedChange = this.newPendingChange(
+          "update_note",
+          resolvedNote,
+          resolvedPayload,
+          timestamp
+        );
+        await this.database.pending_changes.add(resolvedChange);
+
+        const noteConflicts = await this.database.conflicts
+          .where("[user_id+note_id]")
+          .equals([this.userId, conflict.note_id])
+          .toArray();
+        for (const noteConflict of noteConflicts) {
+          if (noteConflict.status !== "unresolved") continue;
+          await this.database.conflicts.put({
+            ...noteConflict,
+            resolution: resolution.action,
+            resolution_pending_change_id: resolvedChange.id,
+            resolved_at: timestamp,
+            resolved_note_payload: { ...resolvedPayload },
+            status: "resolved"
+          });
+        }
+
+        const metadataKey = scopedKey(this.userId, conflict.workspace_id);
+        const metadata = await this.database.local_sync_metadata.get(metadataKey);
+        await this.database.local_sync_metadata.put({
+          client_id: metadata?.client_id ?? this.createClientId(),
+          key: metadataKey,
+          last_pull_cursor: metadata?.last_pull_cursor ?? null,
+          last_successful_sync_at: metadata?.last_successful_sync_at ?? null,
+          last_sync_error: null,
+          updated_at: timestamp,
+          user_id: this.userId,
+          workspace_id: conflict.workspace_id
+        });
+
+        return resolvedChange;
+      }
+    );
   }
 
   public async countPendingChanges(workspaceId?: string): Promise<number> {
@@ -524,7 +655,7 @@ export class LocalNotesRepository {
       .where("[user_id+note_id]")
       .equals([this.userId, noteId])
       .toArray();
-    return changes.filter((change) => change.status !== "synced").length;
+    return changes.filter(isOutstandingChange).length;
   }
 
   private async cacheServerNote(workspaceId: string, note: EncryptedNote): Promise<void> {
@@ -724,12 +855,16 @@ export class LocalNotesRepository {
       note_id: change.note_id,
       pending_change_id: change.id,
       remote_version: remote,
+      resolution: null,
+      resolution_pending_change_id: null,
+      resolved_at: null,
+      resolved_note_payload: null,
       status: "unresolved",
       user_id: this.userId,
       workspace_id: workspaceId
     });
     const current = await this.database.pending_changes.get(change.id);
-    if (current && current.status !== "synced") {
+    if (current && isOutstandingChange(current)) {
       await this.database.pending_changes.put({
         ...current,
         last_error: "version_conflict",
@@ -762,7 +897,7 @@ export class LocalNotesRepository {
     for (const descendant of descendants) {
       if (
         descendant.id !== pushed.id &&
-        descendant.status !== "synced" &&
+        isOutstandingChange(descendant) &&
         descendant.local_revision > pushed.local_revision &&
         descendant.base_version_id === pushed.base_version_id
       ) {

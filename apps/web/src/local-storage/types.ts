@@ -2,7 +2,14 @@ import type { WorkspaceRole } from "../api/types";
 import type { EncryptedNotePayload, ProtectedWorkspaceKey } from "@cipherspace/crypto";
 
 export type PendingChangeOperation = "create_note" | "update_note" | "delete_note";
-export type PendingChangeStatus = "conflict" | "failed" | "pending" | "synced" | "syncing";
+export type PendingChangeStatus =
+  | "conflict"
+  | "failed"
+  | "pending"
+  | "resolved"
+  | "synced"
+  | "syncing";
+export type ConflictResolution = "accept_remote" | "keep_local" | "manual_merge";
 
 export interface LocalNotePayload {
   body: string;
@@ -96,10 +103,19 @@ export interface LocalConflict {
   note_id: string;
   pending_change_id: string;
   remote_version: LocalNoteVersion;
-  status: "unresolved";
+  resolution: ConflictResolution | null;
+  resolution_pending_change_id: string | null;
+  resolved_at: string | null;
+  resolved_note_payload: LocalNotePayload | null;
+  status: "resolved" | "unresolved";
   user_id: string;
   workspace_id: string;
 }
+
+export type ConflictResolutionInput =
+  | { action: "keep_local" }
+  | { action: "accept_remote"; remote_payload: LocalNotePayload }
+  | { action: "manual_merge"; merged_payload: LocalNotePayload };
 
 export interface LocalProtectedWorkspaceKey {
   created_at: string;

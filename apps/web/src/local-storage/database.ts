@@ -77,6 +77,32 @@ export class CipherSpaceLocalDatabase extends Dexie {
       workspace_keys: "key, user_id, workspace_id, [user_id+workspace_id]",
       workspaces: "key, user_id, id, [user_id+id]"
     });
+
+    this.version(4)
+      .stores({
+        conflicts:
+          "key, id, user_id, workspace_id, note_id, pending_change_id, status, [user_id+workspace_id], [user_id+note_id]",
+        local_sync_metadata: "key, user_id, workspace_id, [user_id+workspace_id]",
+        note_versions:
+          "key, user_id, workspace_id, note_id, id, [user_id+note_id], [user_id+workspace_id]",
+        notes:
+          "key, user_id, workspace_id, id, [user_id+id], [user_id+workspace_id]",
+        pending_changes:
+          "id, user_id, workspace_id, note_id, operation_type, status, [user_id+note_id], [user_id+workspace_id], [user_id+status]",
+        workspace_keys: "key, user_id, workspace_id, [user_id+workspace_id]",
+        workspaces: "key, user_id, id, [user_id+id]"
+      })
+      .upgrade(async (transaction) => {
+        await transaction
+          .table<LocalConflict, string>("conflicts")
+          .toCollection()
+          .modify((conflict) => {
+            conflict.resolution = null;
+            conflict.resolution_pending_change_id = null;
+            conflict.resolved_at = null;
+            conflict.resolved_note_payload = null;
+          });
+      });
   }
 }
 

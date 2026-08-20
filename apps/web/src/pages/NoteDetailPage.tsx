@@ -48,7 +48,8 @@ export function NoteDetailPage() {
   });
   const note = localNoteQuery.data;
   const latestVersion = versionQuery.data;
-  const canEdit = workspace.role !== "viewer";
+  const hasConflict = (conflictCountQuery.data ?? 0) > 0;
+  const canEdit = workspace.role !== "viewer" && !hasConflict;
   const canDelete = workspace.role === "owner";
 
   useEffect(() => {
@@ -111,8 +112,13 @@ export function NoteDetailPage() {
           <h2>{displayTitle}</h2>
           <p>Every save updates IndexedDB before a sync attempt can occur.</p>
         </div>
-        {(conflictCountQuery.data ?? 0) > 0 ? (
-          <span className="conflict-badge">Conflict detected</span>
+        {hasConflict ? (
+          <Link
+            className="conflict-badge"
+            to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}
+          >
+            Resolve conflict
+          </Link>
         ) : (pendingCountQuery.data ?? 0) > 0 ? (
           <span className="unsynced-badge">{pendingCountQuery.data} unsynced</span>
         ) : (
@@ -121,6 +127,14 @@ export function NoteDetailPage() {
           </span>
         )}
       </header>
+
+      {hasConflict ? (
+        <div className="warning-callout">
+          Local editing is paused for this note so neither side is changed accidentally. Review
+          the local and server versions, then choose a resolution.
+          {" "}<Link to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}>Open conflict resolution</Link>
+        </div>
+      ) : null}
 
       <div className="detail-grid">
         <section className="panel">
@@ -164,6 +178,13 @@ export function NoteDetailPage() {
                   </button>
                 ) : null}
               </div>
+            ) : hasConflict ? (
+              <Link
+                className="button button--primary"
+                to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}
+              >
+                Resolve conflict
+              </Link>
             ) : (
               <p className="read-only-message">Viewer access is read-only.</p>
             )}

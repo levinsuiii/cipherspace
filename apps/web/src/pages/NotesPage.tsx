@@ -112,7 +112,10 @@ export function NotesPage() {
               const pendingCount = pendingByNote.get(note.id) ?? 0;
               const conflictCount = conflictsByNote.get(note.id) ?? 0;
               return (
-                <Link key={note.id} to={note.id}>
+                <Link
+                  key={note.id}
+                  to={conflictCount > 0 ? `${note.id}/conflict` : note.id}
+                >
                   <div className="note-index">{String(index + 1).padStart(2, "0")}</div>
                   <div>
                     <h3>{titleLabel}</h3>

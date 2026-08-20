@@ -209,7 +209,9 @@ Member removal:
 
 Conflict overwrite:
 
-- Mitigate with server-side base-version comparison under a note lock, client-side pull checks, and durable conflict snapshots. Manual resolution remains deferred.
+- Mitigate with server-side base-version comparison under a note lock, client-side pull checks, durable local/base/remote snapshots, and explicit manual resolution.
+- Keep-local, accept-remote, and manual-merge choices create a new operation based on the selected remote version; none bypass the normal server stale-base check.
+- Residual risk: resolution is device-local, local and resolved payloads are plaintext in IndexedDB, delete conflicts do not yet have a dedicated resolution flow, and there is no automatic semantic merge.
 
 ## Security Limitations
 
@@ -228,7 +230,7 @@ Conflict overwrite:
 - Local drafts are not encrypted at rest. The current local-first slice prioritizes offline durability while key management is undefined; it must not be marketed as encrypted local storage.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
-- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, unresolved conflict metadata, and a password-protected workspace-key envelope in the browser profile. It does not persist the raw workspace key or unlock password.
+- The client stores local plaintext, encrypted local and remote snapshots, retry errors, cursors, unresolved and resolved conflict metadata, the selected resolved plaintext payload, and a password-protected workspace-key envelope in the browser profile. It does not persist the raw workspace key or unlock password.
 
 ## Documentation Requirements For Future Changes
 
