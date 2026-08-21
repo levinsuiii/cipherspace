@@ -19,11 +19,15 @@ import type { Database } from "../src/database/database.js";
 import type { StoredWorkspaceMember, WorkspaceRepository } from "../src/workspaces/repository.js";
 
 const testConfig: AppConfig = {
+  AUTH_RATE_LIMIT_MAX: 10,
+  AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
+  REQUEST_BODY_LIMIT_BYTES: 1_500_000,
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168
 };
@@ -267,13 +271,33 @@ describe("encrypted comment routes", () => {
   });
 
   it("hides comment reads and writes from non-members", async () => {
-    await createComment(cookies.owner);
+    const created = await createComment(cookies.owner);
 
     const list = await listComments(cookies.outsider);
     const create = await createComment(cookies.outsider);
+    const remove = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "DELETE",
+      url: `/api/workspaces/${ids.workspace}/notes/${ids.note}/comments/${created.json().comment.id}`
+    });
     expect(list.statusCode).toBe(404);
     expect(create.statusCode).toBe(404);
+    expect(remove.statusCode).toBe(404);
     expect(list.json()).toMatchObject({ error: { code: "workspace_not_found" } });
+  });
+
+  it("rejects malformed or unsupported encrypted comment envelopes", async () => {
+    const invalidNonce = await createComment(cookies.owner, {
+      ...commentPayload,
+      contentNonce: Buffer.alloc(11).toString("base64")
+    });
+    const unsupportedAlgorithm = await createComment(cookies.owner, {
+      ...commentPayload,
+      encryptionMetadata: { ...commentPayload.encryptionMetadata, algorithm: "AES-CBC" }
+    });
+
+    expect(invalidNonce.statusCode).toBe(400);
+    expect(unsupportedAlgorithm.statusCode).toBe(400);
   });
 
   it("lets editors delete their own comments but not another member's comment", async () => {

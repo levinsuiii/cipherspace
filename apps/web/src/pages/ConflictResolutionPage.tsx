@@ -72,6 +72,8 @@ export function ConflictResolutionPage() {
     setLocalPayload(null);
     setRemotePayload(null);
     setDecryptError(null);
+    setMergeBody("");
+    setMergeTitle("");
     if (!conflict || workspaceKey.status !== "unlocked") return () => { active = false; };
 
     void workspaceKey.getKey()
@@ -204,7 +206,9 @@ export function ConflictResolutionPage() {
           {workspaceKey.status === "unlocked" && !remotePayload && !decryptError ? (
             <LoadingState label="Decrypting remote version…" />
           ) : (
-            <NoteSnapshot payload={remotePayload} />
+            <NoteSnapshot
+              payload={workspaceKey.status === "unlocked" ? remotePayload : null}
+            />
           )}
           <button
             className="button button--secondary button--full"

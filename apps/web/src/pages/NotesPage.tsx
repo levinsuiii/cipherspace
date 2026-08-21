@@ -47,6 +47,13 @@ export function NotesPage() {
   const notes = localNotesQuery.data ?? [];
 
   useEffect(() => {
+    if (workspaceKey.status === "unlocked") return;
+    setBody("");
+    setTitle("");
+    setFormError(null);
+  }, [workspaceKey.status]);
+
+  useEffect(() => {
     let active = true;
     setDecryptedTitles(new Map());
     if (workspaceKey.status !== "unlocked" || notes.length === 0) {

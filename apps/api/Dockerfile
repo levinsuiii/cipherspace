@@ -26,6 +26,8 @@ COPY apps/api/migrations apps/api/migrations
 
 WORKDIR /app/apps/api
 
+USER node
+
 EXPOSE 3000
 
 CMD ["sh", "-c", "node dist/database/migrate.js && node dist/server.js"]

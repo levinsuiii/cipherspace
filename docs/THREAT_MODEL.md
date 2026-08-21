@@ -4,7 +4,7 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 ## Current Implementation Boundary
 
-The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, encrypted-note/version storage APIs, and encrypted note-scoped comments. The browser frontend uses those APIs through a same-origin proxy and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend. Clients receive random opaque session tokens in HTTP-only, `SameSite=Lax` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Workspace members can read workspace metadata, membership, encrypted notes, encrypted version history, and encrypted comments. Owners and editors can create notes, append versions, and create comments; only owners can soft-delete notes. Editors may delete their own comments, and owners may moderate any comment. The final owner is protected with serialized database transactions.
+The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, encrypted-note/version storage APIs, and encrypted note-scoped comments. The browser frontend uses those APIs through a same-origin proxy and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend using 19 MiB of memory, two iterations, one lane, and a 32-byte hash. Clients receive random opaque session tokens in host-only, HTTP-only, high-priority, `SameSite=Strict` cookies, with the `Secure` attribute in production; PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Registration and login share an IP-based rate-limit bucket that defaults to 10 attempts per 60 seconds per API process. Workspace members can read workspace metadata, membership, encrypted notes, encrypted version history, and encrypted comments. Owners and editors can create notes, append versions, and create comments; only owners can soft-delete notes. Editors may delete their own comments, and owners may moderate any comment. The final owner is protected with serialized database transactions.
 
 Note and comment routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note and comment content with 128-bit authentication tags, and validates versioned envelopes. Notes and comments use distinct fixed authenticated-data contexts so an envelope from one content class cannot be decrypted as the other. Wrong keys, tampered ciphertext, malformed payloads, and cross-context swaps fail without returning plaintext.
 
@@ -14,7 +14,11 @@ The local note mutation boundary uses these primitives: when the key provider su
 
 The local-only v1 key flow generates one random workspace key, protects it under a separate local unlock password, and persists only the protected key envelope in user-scoped IndexedDB. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key; wrapping uses a fresh 96-bit nonce and binds the format, user ID, and workspace ID as authenticated additional data. The password and raw/unwrapped key are not persisted or sent to the backend, and the unwrapped `CryptoKey` exists only in browser memory while unlocked. Local note, pending-change, conflict, and resolved-conflict content uses the existing authenticated note envelope in IndexedDB. Member/device key sharing, recovery, rotation, revocation, and lock timeout remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
 
-The note list, detail editor, and conflict view decrypt stored envelopes only while the workspace is unlocked. Resulting title/body values remain in React memory while displayed. Locking immediately renders placeholders/empty editor values and removes the unwrapped key; saving encrypts before persistence. This does not protect content from same-origin scripts, browser extensions, screenshots, memory inspection, or device compromise while unlocked.
+The note list, detail editor, conflict view, and comment discussion decrypt stored envelopes only while the workspace is unlocked. Resulting title/body/comment values remain in React memory while displayed. Locking immediately renders placeholders/empty editor values, clears new-note/comment/merge drafts and decrypted component state, and removes the unwrapped key; saving encrypts before persistence. JavaScript strings cannot be reliably zeroized, so garbage-collected copies may remain transiently in process memory. This does not protect content from same-origin scripts, browser extensions, screenshots, memory inspection, or device compromise while unlocked.
+
+The HTTP boundary uses an exact-origin credentialed CORS allowlist, strict preflight validation, a 1.5 MB default request-body ceiling, a 4 KiB auth-body ceiling, no-store API responses, and global security headers. The API's CSP permits no content loading because it serves JSON; the Docker Nginx frontend applies a self-only application CSP plus clickjacking, MIME-sniffing, referrer, permissions, and cross-origin isolation-oriented headers. HSTS is emitted by the API in production, while a deployed TLS edge must apply HSTS to frontend responses. CORS controls browser response access and is not an authorization mechanism.
+
+Unexpected API failures return a generic error. Malformed and oversized requests use safe error codes without parser details or echoed input. Request bodies are not logged; cookie, authorization, and response cookie headers are redacted. Unexpected-error logging intentionally records only an error class and request metadata, not exception messages or submitted envelopes.
 
 The browser stores the last successfully verified user profile in local storage so the matching IndexedDB scope can be reopened when session verification fails because the network is unavailable. It does not store the HTTP-only session token. An explicit 401 response or successful logout clears this profile cache. This offline identity is a local routing/data-selection convenience, not proof of current server authorization.
 
@@ -113,9 +117,10 @@ Password handling:
 Session handling:
 
 - Generate opaque tokens with platform secure randomness and store only HMAC-SHA-256 token digests keyed by an environment-provided secret.
-- Send session tokens only through HTTP-only, `SameSite=Lax` cookies and add `Secure` in production.
+- Send session tokens only through host-only, HTTP-only, high-priority, `SameSite=Strict` cookies and add `Secure` in production.
 - Reject expired sessions and delete the current session record on logout.
 - Never log credentials, raw session tokens, or the session secret.
+- Require the session HMAC secret from the environment, require at least 32 UTF-8 bytes, and reject documented weak/development markers in production.
 
 Key sharing:
 
@@ -185,13 +190,24 @@ Network interception:
 
 Account attacks:
 
-- Mitigate password disclosure with Argon2id hashing and generic login failures.
-- Residual risk: email verification, password reset, login rate limiting, breached-password checks, multi-factor authentication, and administrator session revocation are not implemented.
+- Mitigate password disclosure with Argon2id hashing, generic login failures, bounded auth bodies, and IP-based registration/login rate limiting.
+- Residual risk: email verification, password reset, breached-password checks, multi-factor authentication, administrator session revocation, and distributed/shared rate limiting are not implemented. The in-memory limiter resets on process restart and is not shared across API replicas.
 
 Session and request forgery:
 
-- Mitigate session database disclosure by storing only keyed token digests and limit passive cookie access with HTTP-only, `SameSite=Lax`, and production `Secure` attributes.
-- Residual risk: there is no explicit CSRF token mechanism, session rotation after privilege changes, device/session management, or automatic cleanup job for expired rows.
+- Mitigate session database disclosure by storing only keyed token digests and limit passive cookie/cross-site use with host-only, HTTP-only, `SameSite=Strict`, and production `Secure` attributes. Exact-origin CORS and JSON request bodies provide additional browser boundary checks.
+- Residual risk: there is no explicit CSRF token mechanism, session rotation after privilege changes, device/session management, or automatic cleanup job for expired rows. Any future need for cross-site cookies requires a dedicated CSRF design before relaxing `SameSite` or CORS.
+
+Cross-origin and browser injection:
+
+- Reject wildcard/path/credential CORS configuration and allow credentialed responses only to exact configured origins. Production must set the policy explicitly; an empty list means same-origin only.
+- Apply restrictive CSP and related headers to API and Docker frontend responses.
+- Residual risk: CORS does not stop non-browser clients and does not replace authentication. CSP reduces common injection impact but cannot make compromised same-origin code or a malicious delivered bundle trustworthy.
+
+Denial of service and oversized input:
+
+- Bound global and auth request bodies, ciphertext sizes, operation counts, cursor size, identifiers, and display strings. Rate-limit the expensive password endpoints before password hashing.
+- Residual risk: the API has no global distributed traffic limiter, database resource governor, or upstream DDoS protection. Sync requests may still be computationally and storage expensive within their bounds.
 
 Malicious or compromised server:
 
@@ -239,6 +255,10 @@ Conflict overwrite:
 - Comment envelope version 1 distinguishes comments from notes but does not bind ciphertext to a workspace ID, note ID, comment ID, parent ID, or author. A valid comment envelope can be replayed or swapped between comments using the same workspace key.
 - Local note content is encrypted at rest with the workspace key, but note/workspace IDs, timestamps, revisions, statuses, ciphertext sizes, and other operational metadata are not hidden. This is browser-profile encryption, not hardware-backed storage or protection against code running in the unlocked origin.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
+- The auth limiter is per API process and in memory. Restarts clear it, multiple replicas do not share counters, and deployments must configure trusted proxy handling correctly before relying on forwarded client IPs.
+- Exact-origin CORS and security headers reduce browser attack surface but do not authorize requests or protect against non-browser clients, compromised same-origin scripts, or malicious frontend delivery.
+- Production secret validation rejects documented placeholder markers but cannot measure true entropy or prevent an operator from supplying another predictable 32-byte value.
+- The API container is hardened for the local Compose topology, but PostgreSQL and Nginx remain ordinary containers rather than a complete production sandbox. Loopback port binding is a local default, not a network firewall policy for production orchestration.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
 - Comment drafts are not durable offline, and comments have no retry queue, version history, conflict detection, or sync protocol. A failed request requires the user to retry while the in-memory draft remains mounted.
 - The client stores encrypted local and remote snapshots, encrypted pending and resolved payloads, retry errors, cursors, unresolved/resolved conflict metadata, and a password-protected workspace-key envelope in the browser profile. It does not persist note plaintext, the raw workspace key, or the unlock password during normal version 5 operation.

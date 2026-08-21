@@ -140,7 +140,7 @@ The note detail page now includes an encrypted discussion section. Comments are 
 
 `apps/web` is a React and TypeScript Vite application. React Router owns public authentication routes and protected workspace/note routes. TanStack Query owns remote API state and cache invalidation, while a separate Dexie repository owns durable client data and pending note mutations. A small typed fetch client sends credentials with every request so the backend's HTTP-only cookie session remains the online authentication boundary.
 
-Local development uses Vite's same-origin `/api` proxy. The Docker web container serves the built single-page application through Nginx and proxies `/api` to the API service. This avoids adding cross-origin credential handling to the backend for the initial frontend slice.
+Local development uses Vite's same-origin `/api` proxy. The Docker web container serves the built single-page application through Nginx and proxies `/api` to the API service. Normal application traffic is therefore same-origin; the backend's exact-origin credentialed CORS policy exists only for explicitly configured direct browser origins and may be empty in same-origin-only deployments.
 
 The note UI now creates, edits, and soft-deletes local notes without waiting for the API. Successful API reads refresh workspace, note metadata, and latest-version envelope caches. When the API is unavailable, cached workspace and note screens remain usable and every local mutation is committed atomically with its pending change. The browser caches the last verified user profile, but never the HTTP-only session token, so user-scoped local data can be reopened during a network outage.
 
@@ -232,6 +232,9 @@ Sensitive local storage rules:
 - Preserve deleted comment identity and parent linkage while clearing ciphertext, nonce, and encryption metadata. Authors with owner/editor write roles can delete their own comments, and owners can moderate any comment.
 - Prefer explicit APIs and schemas over implicit transport conventions.
 - Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.
+- Keep session cookies host-only, `SameSite=Strict`, high priority, and `Secure` in production. Keep the session HMAC secret environment-provided and reject marked development/placeholder secrets in production.
+- Rate-limit registration and login before password hashing. The v1 in-memory limiter is intentionally single-process; a multi-replica deployment requires a shared store.
+- Apply exact-origin credentialed CORS, safe error responses, no-store API caching, bounded request bodies, sensitive-header log redaction, and security headers as request-lifecycle concerns rather than duplicating them in domain services.
 - Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.
 - Store optional note titles as ciphertext/nonce pairs. The direct note API accepts opaque base64 envelopes and does not perform cryptography or plaintext processing.
 - Create an immutable initial version with each note, assign later versions monotonically increasing per-note numbers under a row lock, and set their parent to the version current at append time. Base-version conflict checks remain deferred to the sync protocol.

@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
   },
   encryptLocal: vi.fn(),
   getKey: vi.fn(async () => ({}) as CryptoKey),
-  resolveConflict: vi.fn(async () => ({}))
+  resolveConflict: vi.fn(async () => ({})),
+  status: "unlocked" as "checking" | "locked" | "missing" | "unlocked"
 }));
 
 vi.mock("../local-storage/LocalDataContext", () => ({
@@ -30,7 +31,7 @@ vi.mock("../local-storage/LocalDataContext", () => ({
 }));
 
 vi.mock("../key-management/WorkspaceKeyContext", () => ({
-  useWorkspaceKey: () => ({ getKey: mocks.getKey, status: "unlocked" })
+  useWorkspaceKey: () => ({ getKey: mocks.getKey, status: mocks.status })
 }));
 
 vi.mock("../sync/crypto", () => ({
@@ -66,7 +67,7 @@ function localVersion(id: string, versionNumber: number) {
 }
 
 function renderPage() {
-  return render(
+  const page = () => (
     <MemoryRouter initialEntries={[`/workspaces/${workspaceId}/notes/${noteId}/conflict`]}>
       <Routes>
         <Route
@@ -88,12 +89,15 @@ function renderPage() {
       </Routes>
     </MemoryRouter>
   );
+  const rendered = render(page());
+  return { ...rendered, rerenderPage: () => rendered.rerender(page()) };
 }
 
 describe("ConflictResolutionPage", () => {
   beforeEach(() => {
     mocks.resolveConflict.mockClear();
     mocks.encryptLocal.mockResolvedValue(mocks.encrypted);
+    mocks.status = "unlocked";
     mocks.conflict = {
       base_version: localVersion("50000000-0000-4000-8000-000000000001", 1),
       base_version_id: "50000000-0000-4000-8000-000000000001",
@@ -168,5 +172,19 @@ describe("ConflictResolutionPage", () => {
         mocks.encrypted
       )
     );
+  });
+
+  it("hides both decrypted snapshots and clears merge fields when locked", async () => {
+    const rendered = renderPage();
+    expect(await screen.findByText("Local title")).toBeInTheDocument();
+    expect(await screen.findByText("Remote title")).toBeInTheDocument();
+
+    mocks.status = "locked";
+    rendered.rerenderPage();
+
+    expect(screen.queryByText("Local title")).not.toBeInTheDocument();
+    expect(screen.queryByText("Remote title")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toHaveValue("");
+    expect(screen.getByLabelText("Note body")).toHaveValue("");
   });
 });

@@ -26,30 +26,44 @@ function base64Blob(maxBytes: number) {
         return false;
       }
       const decoded = Buffer.from(value, "base64");
-      return decoded.length > 0 && decoded.length <= maxBytes;
+      return (
+        decoded.length > 0 &&
+        decoded.length <= maxBytes &&
+        decoded.toString("base64") === value
+      );
     });
+}
+
+const aesGcmNonceSchema = base64Blob(12).refine(
+  (value) => Buffer.from(value, "base64").length === 12
+);
+
+function aesGcmCiphertext(maxBytes: number) {
+  return base64Blob(maxBytes).refine(
+    (value) => Buffer.from(value, "base64").length >= 16
+  );
 }
 
 const encryptionMetadataSchema = z
   .object({
-    algorithm: z.string().trim().min(1).max(100),
-    envelopeVersion: z.number().int().positive().max(32_767),
-    keyId: z.string().trim().min(1).max(255)
+    algorithm: z.literal("AES-GCM"),
+    envelopeVersion: z.literal(1),
+    keyId: z.string().trim().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/)
   })
   .strict();
 
 const versionBodyShape = {
   clientVersion: z.string().trim().min(1).max(255).nullable().optional(),
-  contentNonce: base64Blob(256),
-  encryptedContent: base64Blob(1024 * 1024),
+  contentNonce: aesGcmNonceSchema,
+  encryptedContent: aesGcmCiphertext(1024 * 1024),
   encryptionMetadata: encryptionMetadataSchema
 };
 const versionBodySchema = z.object(versionBodyShape).strict();
 const createNoteBodySchema = z
   .object({
     ...versionBodyShape,
-    encryptedTitle: base64Blob(16 * 1024).nullable().optional(),
-    encryptedTitleNonce: base64Blob(256).nullable().optional()
+    encryptedTitle: aesGcmCiphertext(16 * 1024).nullable().optional(),
+    encryptedTitleNonce: aesGcmNonceSchema.nullable().optional()
   })
   .strict()
   .superRefine((value, context) => {

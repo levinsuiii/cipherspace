@@ -9,7 +9,7 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - The frontend includes login and registration pages, HTTP-only cookie session bootstrap/logout, protected routing, a responsive authenticated layout, and basic navigation.
 - Authenticated users can list and create workspaces, open workspace details, and view the backend-supported member directory with role labels.
 - Workspace note pages list the durable local cache, show explicit loading/error/empty/offline states, and expose cached encrypted server-version metadata separately from the local editor payload.
-- Local and server-backed note envelopes are decrypted only after workspace unlock and displayed from memory. Locking immediately replaces list/detail titles with an encrypted placeholder, clears rendered editor values, and disables editing; wrong-key states expose no partial plaintext.
+- Local and server-backed note envelopes are decrypted only after workspace unlock and displayed from memory. Locking immediately replaces list/detail titles with an encrypted placeholder, clears rendered editor values plus new-note/comment/conflict-merge drafts, and disables editing; wrong-key states expose no partial plaintext.
 - Selecting **Save local change** encrypts the current title/body with a fresh nonce before atomically storing the local note and pending update. New note, queue, conflict, and resolved-conflict records persist ciphertext rather than plaintext.
 - Owners and editors can create and edit local notes; owners can add local tombstones. Viewers remain read-only. These local actions do not call the direct encrypted-note API.
 - The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
@@ -34,9 +34,14 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Migration `0005_note_sync_protocol.sql` adds durable operation outcomes and request fingerprints for idempotent note sync.
 - The authentication migration makes `users.password_hash` required and adds expiring `sessions` records with token-digest, user, and expiry indexes.
 - Docker Compose runs the API and PostgreSQL 16, waits for database readiness, and applies migrations before API startup.
+- Docker Compose binds web, API, and PostgreSQL ports to loopback by default. The API runtime runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` mount. The Nginx frontend sends a restrictive browser-header policy.
 - Users can register and log in with a normalized email and a 12-to-128-character password through `/api/auth/register` and `/api/auth/login`.
-- Passwords are stored as Argon2id hashes. Plaintext passwords are neither persisted nor returned.
-- Registration and login create database-backed opaque sessions in HTTP-only, `SameSite=Lax` cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`.
+- Passwords are stored as Argon2id hashes with explicit 19 MiB memory, two-iteration, one-lane, 32-byte-hash parameters. Plaintext passwords are neither persisted nor returned.
+- Registration and login create database-backed opaque sessions in host-only, HTTP-only, high-priority, `SameSite=Strict` cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`.
+- Registration and login share a configurable IP-based rate limit (10 attempts per 60 seconds by default). The current limiter is in-memory and per API process.
+- Credentialed CORS accepts only exact configured origins, rejects wildcards/path origins/embedded credentials, and requires an explicit production policy. Same-origin-only deployments may configure an empty origin list.
+- Helmet applies restrictive API security headers and production HSTS. API responses are non-cacheable, auth request bodies are capped at 4 KiB, the global body limit is configurable, and malformed/oversized/unexpected failures use safe response bodies.
+- Request bodies are not logged; cookie, authorization, and response cookie headers are redacted. Unexpected errors log only an error class plus request metadata rather than exception messages or submitted envelopes.
 - `GET /api/auth/me` returns the authenticated user, and `POST /api/auth/logout` invalidates the current session.
 - Authenticated users can create and list their own workspaces through `/api/workspaces`; the creator is atomically added as the first owner.
 - Workspace members can read workspace details and membership lists. Non-members receive a not-found response for workspace-scoped reads.
@@ -50,7 +55,7 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Every appended version receives a monotonically increasing server version number and records the previously current version as `parentVersionId`. Optional `clientVersion` metadata is retained for future client/sync work.
 - Owners can soft-delete notes. Deleted notes and version rows remain in PostgreSQL but are excluded from normal list, detail, append, and history endpoints.
 - Note authorization is checked against current workspace membership. Non-members receive workspace-not-found responses, viewers cannot mutate notes, and only owners can delete notes.
-- The backend validates UUIDs, strict request shapes, base64 encoding, envelope metadata, and decoded ciphertext/nonce size limits without decrypting or interpreting note data.
+- The backend validates UUIDs, strict request shapes, canonical base64, version 1 AES-GCM metadata, exact 12-byte nonces, minimum authentication-tag length, and decoded ciphertext limits without decrypting or interpreting note data.
 - Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Sync route tests cover accepted push, pull, opaque cursor continuation, repeated-push idempotency, stale-base conflict detection, and non-member denial.
 - Frontend sync tests cover crypto-package preparation, successful status transition, cursor persistence across database reopen, safe retry metadata, conflict snapshots, protection of unsynced drafts during pull, all three resolution choices, remote snapshot decryption, and successful sync of a resolved version.
@@ -68,7 +73,7 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Comment encryption uses AES-256-GCM through `@cipherspace/crypto` with fresh 96-bit nonces and a comment-specific authenticated-data context. Focused crypto tests verify round trips, fresh nonces, and separation from note envelopes.
 - Comments deliberately use direct authenticated API calls and TanStack Query rather than IndexedDB or the note sync engine. A note must have a server version before discussion is enabled. Drafts exist only in component state, so comments require a live connection and have no offline retry or conflict behavior.
 
-The established stack is React, TypeScript, Vite, React Router, TanStack Query, Dexie, and IndexedDB for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, and Vitest. `fake-indexeddb` provides deterministic local persistence tests.
+The established stack is React, TypeScript, Vite, React Router, TanStack Query, Dexie, and IndexedDB for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, exact-origin CORS, Helmet security headers, auth rate limiting, and Vitest. `fake-indexeddb` provides deterministic local persistence tests.
 
 ## MVP Scope
 
@@ -150,8 +155,8 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
 - Workspace lock removes the unwrapped key from memory and hides readable note UI state. There is no automatic timeout, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
-- Authentication is intentionally basic: there is no email verification, password reset/recovery, rate limiting, multi-session listing/revocation, or automatic expired-session cleanup.
-- Cookie sessions rely on `SameSite=Lax`; add an explicit CSRF strategy before introducing sensitive cross-site-compatible mutation flows.
+- Authentication is intentionally basic: there is no email verification, password reset/recovery, breached-password check, MFA, multi-session listing/revocation, or automatic expired-session cleanup. Rate limiting is per-process memory rather than a shared distributed store.
+- Cookie sessions use `SameSite=Strict`, exact-origin CORS, and JSON mutation bodies. There is no explicit CSRF token; add one before introducing cross-site-compatible session flows or relaxing these controls.
 - Authorization is implemented for workspace, membership, note, note-version, comment, and sync endpoints. Non-members receive workspace-not-found responses.
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.

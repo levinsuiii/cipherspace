@@ -13,11 +13,15 @@ import type { AppConfig } from "../src/config.js";
 import type { Database } from "../src/database/database.js";
 
 const testConfig: AppConfig = {
+  AUTH_RATE_LIMIT_MAX: 10,
+  AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
+  REQUEST_BODY_LIMIT_BYTES: 1_500_000,
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168
 };
@@ -81,10 +85,10 @@ afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close()));
 });
 
-function createApp() {
+function createApp(configOverrides: Partial<AppConfig> = {}) {
   const app = buildApp({
     authRepository: repository,
-    config: testConfig,
+    config: { ...testConfig, ...configOverrides },
     database,
     logger: false
   });
@@ -117,12 +121,17 @@ describe("authentication routes", () => {
       user: { createdAt: "2026-08-19T12:00:00.000Z", email: "person@example.com" }
     });
     expect(registration.body).not.toContain(password);
+    expect(registration.headers["cache-control"]).toBe("no-store");
+    expect(registration.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(registration.headers["x-content-type-options"]).toBe("nosniff");
     expect(registration.headers["set-cookie"]).toContain("HttpOnly");
-    expect(registration.headers["set-cookie"]).toContain("SameSite=Lax");
+    expect(registration.headers["set-cookie"]).toContain("Priority=High");
+    expect(registration.headers["set-cookie"]).toContain("SameSite=Strict");
 
     const storedUser = repository.users.get("person@example.com");
     expect(storedUser?.passwordHash).not.toBe(password);
     expect(storedUser?.passwordHash).toMatch(/^\$argon2id\$/);
+    expect(storedUser?.passwordHash).toContain("m=19456,p=1,t=2");
     expect(await verifyPassword(storedUser?.passwordHash ?? "", password)).toBe(true);
 
     const cookie = sessionCookie(registration.headers["set-cookie"]);
@@ -238,5 +247,83 @@ describe("authentication routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: { code: "validation_failed" } });
     expect(repository.users.size).toBe(0);
+  });
+
+  it("allows only configured credentialed CORS origins", async () => {
+    const app = createApp();
+    const allowed = await app.inject({
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "POST"
+      },
+      method: "OPTIONS",
+      url: "/api/auth/login"
+    });
+    const denied = await app.inject({
+      headers: {
+        origin: "https://attacker.example",
+        "access-control-request-method": "POST"
+      },
+      method: "OPTIONS",
+      url: "/api/auth/login"
+    });
+
+    expect(allowed.statusCode).toBe(204);
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(allowed.headers["access-control-allow-credentials"]).toBe("true");
+    expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("rate limits authentication attempts with a safe response", async () => {
+    const app = createApp({ AUTH_RATE_LIMIT_MAX: 2 });
+    const request = () =>
+      app.inject({ method: "POST", payload: {}, url: "/api/auth/login" });
+
+    expect((await request()).statusCode).toBe(400);
+    expect((await request()).statusCode).toBe(400);
+    const limited = await request();
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toEqual({
+      error: {
+        code: "rate_limit_exceeded",
+        message: "Too many authentication attempts. Try again later."
+      }
+    });
+    expect(limited.headers["retry-after"]).toBeDefined();
+  });
+
+  it("rejects oversized auth bodies without echoing their content", async () => {
+    const app = createApp();
+    const marker = "sensitive-password-marker";
+    const response = await app.inject({
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      payload: JSON.stringify({ email: "person@example.com", password: marker.repeat(300) }),
+      url: "/api/auth/login"
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toEqual({
+      error: { code: "request_too_large", message: "The request body is too large." }
+    });
+    expect(response.body).not.toContain(marker);
+  });
+
+  it("does not expose unexpected internal errors", async () => {
+    const app = createApp();
+    vi.spyOn(repository, "findUserByEmail").mockRejectedValueOnce(
+      new Error("database-internal-secret-token")
+    );
+    const response = await app.inject({
+      method: "POST",
+      payload: { email: "person@example.com", password: "correct horse battery staple" },
+      url: "/api/auth/login"
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      error: { code: "internal_error", message: "An unexpected error occurred." }
+    });
+    expect(response.body).not.toContain("database-internal-secret-token");
   });
 });

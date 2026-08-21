@@ -8,7 +8,10 @@ export function registerHealthRoute(app: FastifyInstance, database: Database): v
       await database.query("SELECT 1");
       return { database: "reachable", status: "ok" };
     } catch (error) {
-      app.log.error({ err: error }, "Database health check failed");
+      app.log.error(
+        { errorName: error instanceof Error ? error.name : "UnknownError" },
+        "Database health check failed"
+      );
       return reply.code(503).send({ database: "unreachable", status: "error" });
     }
   });

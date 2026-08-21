@@ -22,11 +22,15 @@ import type {
 } from "../src/workspaces/repository.js";
 
 const testConfig: AppConfig = {
+  AUTH_RATE_LIMIT_MAX: 10,
+  AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
+  REQUEST_BODY_LIMIT_BYTES: 1_500_000,
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168
 };
@@ -311,9 +315,15 @@ describe("workspace routes", () => {
       method: "GET",
       url: `/api/workspaces/${workspace.id}`
     });
+    const outsiderMembers = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/members`
+    });
     expect(memberAccess.statusCode).toBe(200);
     expect(memberAccess.json().workspace).toMatchObject({ id: workspace.id, role: "editor" });
     expect(outsiderAccess.statusCode).toBe(404);
+    expect(outsiderMembers.statusCode).toBe(404);
     expect(outsiderAccess.json()).toMatchObject({ error: { code: "workspace_not_found" } });
   });
 
@@ -348,14 +358,29 @@ describe("workspace routes", () => {
   it("denies member management to non-owners", async () => {
     const workspace = await createWorkspace();
     await addMember(workspace.id, { role: "editor", userId: ids.editor });
+    await addMember(workspace.id, { role: "viewer", userId: ids.viewer });
 
-    const response = await addMember(
+    const editorAdd = await addMember(
       workspace.id,
-      { role: "viewer", userId: ids.viewer },
+      { role: "owner", userId: ids.outsider },
       cookies.editor
     );
-    expect(response.statusCode).toBe(403);
-    expect(response.json()).toMatchObject({
+    const viewerUpdate = await app.inject({
+      headers: { cookie: cookies.viewer },
+      method: "PATCH",
+      payload: { role: "owner" },
+      url: `/api/workspaces/${workspace.id}/members/${ids.editor}`
+    });
+    const outsiderDelete = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "DELETE",
+      url: `/api/workspaces/${workspace.id}/members/${ids.editor}`
+    });
+
+    expect(editorAdd.statusCode).toBe(403);
+    expect(viewerUpdate.statusCode).toBe(403);
+    expect(outsiderDelete.statusCode).toBe(404);
+    expect(editorAdd.json()).toMatchObject({
       error: { code: "workspace_management_forbidden" }
     });
   });

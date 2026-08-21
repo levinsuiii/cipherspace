@@ -61,7 +61,7 @@ npm run dev:api
 npm run dev:web
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api` and `/health` to `http://localhost:3000`; this is required for the HTTP-only cookie session to remain same-origin without enabling backend CORS.
+Open `http://localhost:5173`. Vite proxies `/api` and `/health` to `http://localhost:3000` so normal browser traffic remains same-origin. The API also has an explicit development-origin CORS allowlist for direct local API calls; it never reflects arbitrary origins.
 
 Frontend workspace commands:
 
@@ -80,6 +80,44 @@ The workspace UI provides a minimal local-only key creation/unlock flow and an e
 This v1 key is tied to the current user, workspace, and browser profile. There is no recovery or member/device key sharing yet. Titles and bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the unwrapped key from memory. Note IDs, workspace IDs, timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible in the browser profile.
 
 Opening a local or server-backed note decrypts its envelope only after the workspace is unlocked. Plaintext is held in React memory while displayed. Selecting **Save local change** creates a new encrypted local envelope and encrypted pending operation; it does not persist the title or body as plaintext. A locked workspace replaces titles with **Encrypted note**, clears editor values, and disables editing. A wrong workspace key produces a generic decryption error without exposing partial content. IndexedDB schema version 5 lazily encrypts older plaintext note, queue, and conflict payloads after the correct workspace key is unlocked.
+
+## Security
+
+CipherSpace applies the following practical hardening controls:
+
+- Account passwords are stored only as Argon2id hashes using 19 MiB of memory, two iterations, one lane, and a 32-byte hash. Login failures are generic, including the unknown-account path.
+- Sessions use 256-bit random opaque tokens. PostgreSQL stores only keyed HMAC-SHA-256 token digests. Cookies are host-only, HTTP-only, `SameSite=Strict`, high priority, and `Secure` in production. Authenticated API responses use `Cache-Control: no-store`.
+- Registration and login share an IP-based rate-limit bucket. Defaults are 10 attempts per 60 seconds and can be changed with `AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`. The v1 limiter is in memory per API process; multi-instance deployments need a shared rate-limit store.
+- Credentialed CORS is limited to exact origins from `CORS_ORIGINS`. Wildcards, URL paths, and embedded credentials are rejected. Production must set the variable explicitly; set it to an empty value when all browser traffic is same-origin.
+- The API applies CSP, clickjacking, MIME-sniffing, referrer, cross-origin, and related security headers through Helmet. HSTS is enabled by the API only in production. The Docker Nginx frontend applies a restrictive CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a restrictive permissions policy, and same-origin opener/resource policies. A production TLS edge must also apply HSTS to frontend responses.
+- Request bodies default to 1,500,000 bytes globally, while auth bodies are capped at 4 KiB. Malformed, oversized, unsupported, and unexpected requests receive safe error bodies without validation internals or stack traces.
+- Fastify logs request metadata but not bodies. Cookie, authorization, and `Set-Cookie` headers are explicitly redacted. Unexpected-error logging records only an error class, request ID, method, and route—not error messages or payloads.
+- Workspace, membership, note, version, comment, sync-push, and sync-pull operations enforce current membership. Viewers are read-only; owners and editors may create/update notes and comments; only owners delete notes or manage members; comment deletion follows the documented author/moderator rule.
+- Note and comment API inputs must use the implemented version 1 AES-GCM envelope shape, including a 12-byte nonce, at least a 16-byte authenticated ciphertext/tag, canonical base64, and bounded fields. The server still cannot prove that submitted opaque bytes encrypt meaningful content.
+- Locking removes the workspace key and clears note titles, editor values, comment drafts/content, and conflict/merge plaintext from rendered React state. Plaintext can still exist transiently in browser/runtime memory while unlocked and cannot be reliably zeroized as JavaScript strings.
+- New local note, queue, conflict, and resolution records store encrypted envelopes and `null` legacy plaintext fields. A key-dependent compatibility migration encrypts legacy schema v1-v4 plaintext after the correct workspace is unlocked.
+- Docker Compose binds PostgreSQL, API, and web ports to loopback by default. The API container runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` filesystem. Development database credentials and the marked development session secret are not suitable for production.
+
+`SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` must be a PostgreSQL URL. Body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
+
+Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; there is no key sharing, recovery, rotation, revocation, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter; a malicious delivered frontend, extension, same-origin script, or compromised unlocked device can access plaintext and key material. See `docs/THREAT_MODEL.md` for the complete boundary.
+
+## Manual security hardening check
+
+Prepare three accounts: an owner, a viewer member added by the owner, and an outsider who is not a member. Create and sync one note, add one comment, and put a unique marker such as `CIPHERSPACE-PLAINTEXT-CHECK-7f3c` in both the note and comment. Keep separate cookie jars or browser profiles for the three accounts. Record the workspace, note, and comment UUIDs.
+
+1. **Workspace non-member:** as the outsider, request `GET /api/workspaces/<workspaceId>` and `GET /api/workspaces/<workspaceId>/members`. Both must return `404 workspace_not_found`; neither response may contain the workspace name or member email addresses.
+2. **Note non-member:** as the outsider, request the note list, note detail, and version history under that workspace. Also try note create, version append, and delete with a structurally valid envelope. Every request must return `404 workspace_not_found`.
+3. **Comment non-member:** as the outsider, try comment list, create, and delete. Every request must return `404 workspace_not_found`.
+4. **Sync non-member:** as the outsider, try both sync pull and a validly shaped sync push. Both must return `404 workspace_not_found`; the pushed operation must not appear when the owner pulls.
+5. **Viewer writes:** sign in as the viewer. Workspace/note/comment reads and sync pull may succeed. Note create/version append/delete, comment create/delete, member management, and sync create/update/delete must be denied. Direct routes return `403`; sync push returns a per-operation `write_forbidden` rejection. The UI must show no create/edit/comment controls.
+6. **Lock behavior:** while the note, discussion, and conflict page are readable, type unsaved note/comment/merge drafts and select **Lock**. Titles must become **Encrypted note**; note fields, comment bodies/draft, and conflict snapshots/merge fields must be empty or replaced by locked placeholders. Navigating back must not restore unsaved plaintext.
+7. **IndexedDB leakage:** open browser developer tools, select **Application → IndexedDB → cipherspace-local**, and inspect/filter every store for `CIPHERSPACE-PLAINTEXT-CHECK-7f3c`. The marker must not occur in `notes`, `pending_changes`, `conflicts`, `note_versions`, `workspace_keys`, or sync metadata. Legacy `local_note_payload` and `resolved_note_payload` fields must be `null` after unlocking/migration. Comments are online-only and must not appear in IndexedDB at all.
+8. **Log leakage:** run `docker compose logs api` after registration, login, note/comment mutation, sync, unlock, and lock. Search for the unique marker, account password, local unlock password, raw cookie value, `Authorization` value, and any exported/raw key. None may appear. Normal logs may contain request IDs, methods, routes, status codes, timings, and non-secret error class names.
+9. **Authentication failures:** request a protected endpoint without a cookie and with `Cookie: cipherspace_session=invalid`; both must return the same safe `401 unauthorized` body. Send malformed JSON and an auth body larger than 4 KiB; expect safe `400` and `413 request_too_large` responses without echoed input. Exceed the configured auth attempt count from one client IP; expect `429 rate_limit_exceeded` plus `Retry-After`.
+10. **Docker/local regression:** run `docker compose config`, then `docker compose up --build`. Confirm PostgreSQL becomes healthy, migrations complete, `http://localhost:8080/health` returns `200`, registration/login/sync still work, and `docker compose ps` shows all services running. Confirm the API and database are reachable only on the configured loopback bind addresses unless you intentionally changed them.
+
+For CORS/header checks, send a preflight with `Origin: http://localhost:5173` and confirm that exact origin plus `Access-Control-Allow-Credentials: true` is returned. Repeat with `Origin: https://attacker.example` and confirm there is no `Access-Control-Allow-Origin`. Inspect frontend and API responses for the headers described above. In production, serve only over HTTPS, set `NODE_ENV=production`, set a new random `SESSION_SECRET`, use non-development database credentials, and set `CORS_ORIGINS` to the deployed frontend origin or an empty value for same-origin-only operation.
 
 ## Manual frontend check
 
@@ -147,9 +185,9 @@ Conflict snapshots remain in IndexedDB as encrypted resolved history. The origin
 
 ## Authentication
 
-Passwords must be between 12 and 128 characters. They are hashed with Argon2id before storage. Registering or logging in sets an opaque session token in the `cipherspace_session` cookie. The cookie is HTTP-only, uses `SameSite=Lax`, and is marked `Secure` when `NODE_ENV=production`. PostgreSQL stores only an HMAC-SHA-256 digest of the token.
+Passwords must be between 12 and 128 characters. They are hashed with Argon2id before storage. Registering or logging in sets an opaque session token in the `cipherspace_session` cookie. The cookie is HTTP-only, uses `SameSite=Strict` and high priority, and is marked `Secure` when `NODE_ENV=production`. PostgreSQL stores only an HMAC-SHA-256 digest of the token.
 
-`SESSION_SECRET` is required, must contain at least 32 characters, and should be a securely generated value. Changing it invalidates existing sessions. `SESSION_TTL_HOURS` defaults to 168 (seven days) and accepts values from 1 through 720.
+`SESSION_SECRET` is required and must contain at least 32 UTF-8 bytes. Production rejects the documented development/placeholder marker, so deploy with a securely generated value. Changing it invalidates existing sessions. `SESSION_TTL_HOURS` defaults to 168 (seven days) and accepts values from 1 through 720. Auth rate limiting defaults to 10 registration/login attempts per IP per 60 seconds.
 
 The following PowerShell-compatible curl examples use a cookie jar. Use a development server (`npm run dev`) for plain-HTTP local requests:
 
@@ -244,7 +282,7 @@ $workspaceId = "00000000-0000-4000-8000-000000000000"
 
 # Create a note with an initial encrypted version
 curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
-  --data '{"encryptedTitle":"AQIDBA==","encryptedTitleNonce":"AAECAwQFBgcICQoL","encryptedContent":"2RhjKslREPA=","contentNonce":"BwgJCgsMDQ4PEBES","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-1"},"clientVersion":"device-revision-1"}' `
+  --data '{"encryptedTitle":"AAAAAAAAAAAAAAAAAAAAAA==","encryptedTitleNonce":"AAAAAAAAAAAAAAAA","encryptedContent":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","contentNonce":"AAAAAAAAAAAAAAAA","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"device-revision-1"}' `
   "http://localhost:3000/api/workspaces/$workspaceId/notes"
 
 # List active notes (metadata and encrypted titles, without content versions)
@@ -256,7 +294,7 @@ $noteId = "00000000-0000-4000-8000-000000000000"
 
 # Append a new encrypted version
 curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
-  --data '{"encryptedContent":"E94RYgOM","contentNonce":"CAkKCwwNDg8QERIT","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-1"},"clientVersion":"device-revision-2"}' `
+  --data '{"encryptedContent":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","contentNonce":"AQEBAQEBAQEBAQEB","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"device-revision-2"}' `
   "http://localhost:3000/api/workspaces/$workspaceId/notes/$noteId/versions"
 
 # Read version history in ascending version order
@@ -264,7 +302,7 @@ curl.exe -i -b owner-cookies.txt `
   "http://localhost:3000/api/workspaces/$workspaceId/notes/$noteId/versions"
 ```
 
-Replace the sample base64 values with ciphertext and fresh nonces generated by a client-side authenticated-encryption implementation. The note content limit is 1 MiB decoded; encrypted titles are limited to 16 KiB, nonces to 256 bytes, and `clientVersion` to 255 characters.
+Replace the sample base64 values with ciphertext and fresh nonces generated by the client crypto package; the all-zero/one values above are shape-only examples and are not secure ciphertext. The note content limit is 1 MiB decoded; encrypted titles are limited to 16 KiB, AES-GCM nonces must decode to exactly 12 bytes, ciphertext must include at least a 16-byte authentication tag, and `clientVersion` is limited to 255 characters.
 
 Supported note endpoints are:
 

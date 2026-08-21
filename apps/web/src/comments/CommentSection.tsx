@@ -141,6 +141,13 @@ export function CommentSection({
   );
   const thread = useMemo(() => buildThread(commentsQuery.data?.comments ?? []), [commentsQuery.data]);
 
+  useEffect(() => {
+    if (keyStatus === "unlocked") return;
+    setDraft("");
+    setReplyTo(null);
+    setError(null);
+  }, [keyStatus]);
+
   if (!isServerBacked) {
     return (
       <section className="panel comment-section" aria-labelledby="note-comments-heading">

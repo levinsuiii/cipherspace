@@ -30,19 +30,30 @@ function base64Blob(maxBytes: number) {
         return false;
       }
       const decoded = Buffer.from(value, "base64");
-      return decoded.length > 0 && decoded.length <= maxBytes;
+      return (
+        decoded.length > 0 &&
+        decoded.length <= maxBytes &&
+        decoded.toString("base64") === value
+      );
     });
 }
 
+const aesGcmNonceSchema = base64Blob(12).refine(
+  (value) => Buffer.from(value, "base64").length === 12
+);
+const aesGcmCiphertextSchema = base64Blob(64 * 1024).refine(
+  (value) => Buffer.from(value, "base64").length >= 16
+);
+
 const createCommentBodySchema = z
   .object({
-    contentNonce: base64Blob(256),
-    encryptedContent: base64Blob(64 * 1024),
+    contentNonce: aesGcmNonceSchema,
+    encryptedContent: aesGcmCiphertextSchema,
     encryptionMetadata: z
       .object({
-        algorithm: z.string().trim().min(1).max(100),
-        envelopeVersion: z.number().int().positive().max(32_767),
-        keyId: z.string().trim().min(1).max(255)
+        algorithm: z.literal("AES-GCM"),
+        envelopeVersion: z.literal(1),
+        keyId: z.string().trim().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/)
       })
       .strict(),
     parentCommentId: z.string().uuid().nullable().optional()

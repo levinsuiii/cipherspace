@@ -14,7 +14,16 @@ import {
   type WorkspaceService
 } from "../workspaces/service.js";
 
-const workspaceBodySchema = z.object({ name: z.string().trim().min(1).max(100) }).strict();
+const workspaceBodySchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine((name) => !/[\u0000-\u001f\u007f]/.test(name))
+  })
+  .strict();
 const workspaceParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const memberParamsSchema = z
   .object({ id: z.string().uuid(), userId: z.string().uuid() })

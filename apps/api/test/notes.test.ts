@@ -21,11 +21,15 @@ import type {
 import type { StoredWorkspaceMember, WorkspaceRepository } from "../src/workspaces/repository.js";
 
 const testConfig: AppConfig = {
+  AUTH_RATE_LIMIT_MAX: 10,
+  AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
+  REQUEST_BODY_LIMIT_BYTES: 1_500_000,
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168
 };
@@ -205,8 +209,8 @@ const database: Database = {
 const notePayload = {
   clientVersion: "device-revision-1",
   contentNonce: Buffer.alloc(12, 7).toString("base64"),
-  encryptedContent: Buffer.from([217, 24, 99, 42, 201, 81, 16, 240]).toString("base64"),
-  encryptedTitle: Buffer.from([47, 201, 18, 110]).toString("base64"),
+  encryptedContent: Buffer.alloc(32, 9).toString("base64"),
+  encryptedTitle: Buffer.alloc(24, 5).toString("base64"),
   encryptedTitleNonce: Buffer.alloc(12, 3).toString("base64"),
   encryptionMetadata: { algorithm: "AES-GCM", envelopeVersion: 1, keyId: "workspace-key-1" }
 };
@@ -326,8 +330,33 @@ describe("encrypted note routes", () => {
       method: "GET",
       url: `/api/workspaces/${ids.workspace}/notes/${noteId}`
     });
+    const history = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "GET",
+      url: `/api/workspaces/${ids.workspace}/notes/${noteId}/versions`
+    });
+    const create = await createNote(cookies.outsider);
+    const append = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "POST",
+      payload: {
+        ...notePayload,
+        encryptedTitle: undefined,
+        encryptedTitleNonce: undefined
+      },
+      url: `/api/workspaces/${ids.workspace}/notes/${noteId}/versions`
+    });
+    const remove = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "DELETE",
+      url: `/api/workspaces/${ids.workspace}/notes/${noteId}`
+    });
     expect(list.statusCode).toBe(404);
     expect(get.statusCode).toBe(404);
+    expect(history.statusCode).toBe(404);
+    expect(create.statusCode).toBe(404);
+    expect(append.statusCode).toBe(404);
+    expect(remove.statusCode).toBe(404);
     expect(get.json()).toMatchObject({ error: { code: "workspace_not_found" } });
   });
 
@@ -344,8 +373,36 @@ describe("encrypted note routes", () => {
       payload: { ...notePayload, encryptedTitleNonce: undefined },
       url: `/api/workspaces/${ids.workspace}/notes`
     });
+    const invalidNonce = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: { ...notePayload, contentNonce: Buffer.alloc(13).toString("base64") },
+      url: `/api/workspaces/${ids.workspace}/notes`
+    });
+    const unsupportedAlgorithm = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: {
+        ...notePayload,
+        encryptionMetadata: { ...notePayload.encryptionMetadata, algorithm: "AES-CBC" }
+      },
+      url: `/api/workspaces/${ids.workspace}/notes`
+    });
+    const canonicalCiphertext = Buffer.alloc(16).toString("base64");
+    const nonCanonicalBase64 = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: {
+        ...notePayload,
+        encryptedContent: `${canonicalCiphertext.slice(0, -3)}B==`
+      },
+      url: `/api/workspaces/${ids.workspace}/notes`
+    });
     expect(invalidBase64.statusCode).toBe(400);
     expect(unpairedTitleNonce.statusCode).toBe(400);
+    expect(invalidNonce.statusCode).toBe(400);
+    expect(unsupportedAlgorithm.statusCode).toBe(400);
+    expect(nonCanonicalBase64.statusCode).toBe(400);
     expect(invalidBase64.json()).toMatchObject({ error: { code: "validation_failed" } });
   });
 
@@ -356,7 +413,7 @@ describe("encrypted note routes", () => {
     const secondPayload = {
       clientVersion: "device-revision-2",
       contentNonce: Buffer.alloc(12, 8).toString("base64"),
-      encryptedContent: Buffer.from([19, 222, 17, 98, 3, 140]).toString("base64"),
+      encryptedContent: Buffer.alloc(32, 4).toString("base64"),
       encryptionMetadata: notePayload.encryptionMetadata
     };
     const appended = await app.inject({

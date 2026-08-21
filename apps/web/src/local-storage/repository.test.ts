@@ -124,6 +124,15 @@ describe("LocalNotesRepository", () => {
       })
     ]);
     await expect(database.local_sync_metadata.count()).resolves.toBe(1);
+    const durableStorageDump = JSON.stringify({
+      conflicts: await database.conflicts.toArray(),
+      notes: await database.notes.toArray(),
+      pendingChanges: await database.pending_changes.toArray(),
+      versions: await database.note_versions.toArray(),
+      workspaceKeys: await database.workspace_keys.toArray()
+    });
+    expect(durableStorageDump).not.toContain(payload.title);
+    expect(durableStorageDump).not.toContain(payload.body);
   });
 
   it("updates the local note and coalesces repeated edits into one update operation", async () => {

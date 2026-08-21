@@ -17,7 +17,10 @@ async function start(): Promise<void> {
   try {
     await app.listen({ host: config.HOST, port: config.PORT });
   } catch (error) {
-    app.log.error(error);
+    app.log.error(
+      { errorName: error instanceof Error ? error.name : "UnknownError" },
+      "Server startup failed"
+    );
     await app.close();
     process.exitCode = 1;
   }

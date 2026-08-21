@@ -19,13 +19,16 @@ const credentialsSchema = z
 
 interface AuthRouteOptions {
   authService: AuthService;
+  rateLimitMax: number;
+  rateLimitWindowMs: number;
   secureCookies: boolean;
 }
 
 const cookieBaseOptions = {
   httpOnly: true,
   path: "/",
-  sameSite: "lax" as const
+  priority: "high" as const,
+  sameSite: "strict" as const
 };
 
 function setSessionCookie(
@@ -50,58 +53,71 @@ function validationFailure(reply: FastifyReply) {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
-  const { authService, secureCookies } = options;
+  const { authService, rateLimitMax, rateLimitWindowMs, secureCookies } = options;
   const requireAuthentication = createRequireAuthentication(authService);
+  const authRateLimit = {
+    max: rateLimitMax,
+    timeWindow: rateLimitWindowMs,
+    groupId: "authentication"
+  };
 
-  app.post<{ Body: unknown }>("/api/auth/register", async (request, reply) => {
-    const credentials = credentialsSchema.safeParse(request.body);
+  app.post<{ Body: unknown }>(
+    "/api/auth/register",
+    { bodyLimit: 4_096, config: { rateLimit: authRateLimit } },
+    async (request, reply) => {
+      const credentials = credentialsSchema.safeParse(request.body);
 
-    if (!credentials.success) {
-      return validationFailure(reply);
-    }
-
-    try {
-      const session = await authService.register(
-        credentials.data.email,
-        credentials.data.password
-      );
-      setSessionCookie(reply, session, secureCookies);
-      return reply.code(201).send({ user: session.user });
-    } catch (error) {
-      if (error instanceof DuplicateAccountError) {
-        return reply.code(409).send({
-          error: {
-            code: "account_creation_failed",
-            message: "Unable to create an account with those credentials."
-          }
-        });
+      if (!credentials.success) {
+        return validationFailure(reply);
       }
 
-      throw error;
+      try {
+        const session = await authService.register(
+          credentials.data.email,
+          credentials.data.password
+        );
+        setSessionCookie(reply, session, secureCookies);
+        return reply.code(201).send({ user: session.user });
+      } catch (error) {
+        if (error instanceof DuplicateAccountError) {
+          return reply.code(409).send({
+            error: {
+              code: "account_creation_failed",
+              message: "Unable to create an account with those credentials."
+            }
+          });
+        }
+
+        throw error;
+      }
     }
-  });
+  );
 
-  app.post<{ Body: unknown }>("/api/auth/login", async (request, reply) => {
-    const credentials = credentialsSchema.safeParse(request.body);
+  app.post<{ Body: unknown }>(
+    "/api/auth/login",
+    { bodyLimit: 4_096, config: { rateLimit: authRateLimit } },
+    async (request, reply) => {
+      const credentials = credentialsSchema.safeParse(request.body);
 
-    if (!credentials.success) {
-      return validationFailure(reply);
-    }
-
-    try {
-      const session = await authService.login(credentials.data.email, credentials.data.password);
-      setSessionCookie(reply, session, secureCookies);
-      return { user: session.user };
-    } catch (error) {
-      if (error instanceof InvalidCredentialsError) {
-        return reply.code(401).send({
-          error: { code: "invalid_credentials", message: "Invalid email or password." }
-        });
+      if (!credentials.success) {
+        return validationFailure(reply);
       }
 
-      throw error;
+      try {
+        const session = await authService.login(credentials.data.email, credentials.data.password);
+        setSessionCookie(reply, session, secureCookies);
+        return { user: session.user };
+      } catch (error) {
+        if (error instanceof InvalidCredentialsError) {
+          return reply.code(401).send({
+            error: { code: "invalid_credentials", message: "Invalid email or password." }
+          });
+        }
+
+        throw error;
+      }
     }
-  });
+  );
 
   app.get(
     "/api/auth/me",

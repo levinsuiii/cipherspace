@@ -9,7 +9,8 @@ import { CommentSection } from "./CommentSection";
 import { decryptApiComment, encryptCommentForApi } from "./crypto";
 
 const mocks = vi.hoisted(() => ({
-  getKey: vi.fn<() => Promise<CryptoKey>>()
+  getKey: vi.fn<() => Promise<CryptoKey>>(),
+  status: "unlocked" as "checking" | "locked" | "missing" | "unlocked"
 }));
 
 vi.mock("../auth/AuthContext", () => ({
@@ -17,7 +18,7 @@ vi.mock("../auth/AuthContext", () => ({
 }));
 
 vi.mock("../key-management/WorkspaceKeyContext", () => ({
-  useWorkspaceKey: () => ({ getKey: mocks.getKey, status: "unlocked" })
+  useWorkspaceKey: () => ({ getKey: mocks.getKey, status: mocks.status })
 }));
 
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -48,17 +49,20 @@ function renderSection() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } }
   });
-  return render(
+  const section = () => (
     <QueryClientProvider client={queryClient}>
       <CommentSection isServerBacked noteId={noteId} role="editor" workspaceId={workspaceId} />
     </QueryClientProvider>
   );
+  const rendered = render(section());
+  return { ...rendered, rerenderSection: () => rendered.rerender(section()) };
 }
 
 beforeEach(async () => {
   workspaceKey = await generateWorkspaceKey();
   mocks.getKey.mockReset();
   mocks.getKey.mockResolvedValue(workspaceKey);
+  mocks.status = "unlocked";
 });
 
 afterEach(() => {
@@ -130,5 +134,20 @@ describe("CommentSection", () => {
 
     expect(await screen.findByText(/Viewers can read discussion/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Comment")).not.toBeInTheDocument();
+  });
+
+  it("clears a plaintext comment draft immediately when the workspace locks", async () => {
+    vi.spyOn(api.comments, "list").mockResolvedValue({ comments: [] });
+    vi.spyOn(api.workspaces, "listMembers").mockResolvedValue({ members: [] });
+    const rendered = renderSection();
+    const draft = await screen.findByLabelText("Comment");
+    fireEvent.change(draft, { target: { value: "unique plaintext draft marker" } });
+    expect(draft).toHaveValue("unique plaintext draft marker");
+
+    mocks.status = "locked";
+    rendered.rerenderSection();
+
+    await waitFor(() => expect(screen.getByLabelText("Comment")).toHaveValue(""));
+    expect(screen.queryByDisplayValue("unique plaintext draft marker")).not.toBeInTheDocument();
   });
 });

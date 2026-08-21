@@ -22,11 +22,15 @@ import type {
 import type { StoredWorkspaceMember, WorkspaceRepository } from "../src/workspaces/repository.js";
 
 const testConfig: AppConfig = {
+  AUTH_RATE_LIMIT_MAX: 10,
+  AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
+  REQUEST_BODY_LIMIT_BYTES: 1_500_000,
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168
 };
@@ -40,6 +44,7 @@ const ids = {
   operationC: "40000000-0000-4000-8000-000000000003",
   outsider: "00000000-0000-4000-8000-000000000002",
   owner: "00000000-0000-4000-8000-000000000001",
+  viewer: "00000000-0000-4000-8000-000000000003",
   workspace: "10000000-0000-4000-8000-000000000001"
 };
 const now = new Date("2026-08-20T10:00:00.000Z");
@@ -93,6 +98,9 @@ class InMemorySyncRepository implements SyncRepository {
   }
 
   public async processOperation(input: SyncOperationInput): Promise<ProcessSyncOperationResult> {
+    if (memberships.get(input.userId)?.role === "viewer") {
+      return { reason: "forbidden", rejected: true };
+    }
     const existing = this.operations.get(input.operationId);
     if (existing) {
       if (
@@ -275,7 +283,7 @@ function change(
 
 const apps: ReturnType<typeof buildApp>[] = [];
 let app: ReturnType<typeof buildApp>;
-let cookies: { outsider: string; owner: string };
+let cookies: { outsider: string; owner: string; viewer: string };
 let syncRepository: InMemorySyncRepository;
 
 beforeEach(() => {
@@ -286,10 +294,17 @@ beforeEach(() => {
     role: "owner",
     userId: ids.owner
   });
+  memberships.set(ids.viewer, {
+    addedAt: now,
+    email: "viewer@example.com",
+    role: "viewer",
+    userId: ids.viewer
+  });
   const authRepository = new InMemoryAuthRepository();
   cookies = {
     outsider: authRepository.seedUser(ids.outsider, "outsider@example.com"),
-    owner: authRepository.seedUser(ids.owner, "owner@example.com")
+    owner: authRepository.seedUser(ids.owner, "owner@example.com"),
+    viewer: authRepository.seedUser(ids.viewer, "viewer@example.com")
   };
   syncRepository = new InMemorySyncRepository();
   app = buildApp({
@@ -393,5 +408,24 @@ describe("encrypted note sync routes", () => {
     expect(deniedPush.statusCode).toBe(404);
     expect(deniedPull.statusCode).toBe(404);
     expect(deniedPush.json()).toMatchObject({ error: { code: "workspace_not_found" } });
+  });
+
+  it("allows viewers to pull but rejects every sync mutation", async () => {
+    const deniedPush = await push(
+      ids.clientA,
+      [change(ids.operationA, "create_note", null, 1)],
+      cookies.viewer
+    );
+    const allowedPull = await app.inject({
+      headers: { cookie: cookies.viewer },
+      method: "GET",
+      url: `/api/workspaces/${ids.workspace}/sync/pull`
+    });
+
+    expect(deniedPush.statusCode).toBe(200);
+    expect(deniedPush.json()).toMatchObject({
+      results: [{ errorCode: "write_forbidden", status: "rejected" }]
+    });
+    expect(allowedPull.statusCode).toBe(200);
   });
 });

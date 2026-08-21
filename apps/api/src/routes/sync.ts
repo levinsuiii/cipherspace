@@ -24,7 +24,11 @@ function base64Blob(maxBytes: number) {
         return false;
       }
       const decoded = Buffer.from(value, "base64");
-      return decoded.length > 0 && decoded.length <= maxBytes;
+      return (
+        decoded.length > 0 &&
+        decoded.length <= maxBytes &&
+        decoded.toString("base64") === value
+      );
     });
 }
 
