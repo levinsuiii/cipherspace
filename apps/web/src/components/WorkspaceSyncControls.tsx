@@ -6,15 +6,18 @@ import {
   type WorkspaceKeyStatus
 } from "../key-management/WorkspaceKeyContext";
 import type { SyncSummary } from "../sync/engine";
+import type { WorkspaceKeyAccess } from "../api/types";
 
 type SyncStatus = "conflict" | "failed" | "idle" | "locked" | "synced" | "syncing";
 
 interface WorkspaceSyncControlsProps {
   conflictCount: number;
   keyStatus: WorkspaceKeyStatus;
+  keyAccess: WorkspaceKeyAccess | null;
   onCreateKey(passphrase: string): Promise<void>;
   onLock(): void;
   onSync(): Promise<SyncSummary>;
+  onSetupShared(identityPassword: string, passphrase: string): Promise<void>;
   onUnlock(passphrase: string): Promise<void>;
   pendingCount: number;
 }
@@ -31,15 +34,18 @@ function errorMessage(error: unknown): string {
 export function WorkspaceSyncControls({
   conflictCount,
   keyStatus,
+  keyAccess,
   onCreateKey,
   onLock,
   onSync,
+  onSetupShared,
   onUnlock,
   pendingCount
 }: WorkspaceSyncControlsProps) {
   const [confirmPassphrase, setConfirmPassphrase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
+  const [identityPassword, setIdentityPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
 
@@ -60,8 +66,13 @@ export function WorkspaceSyncControls({
     }
     setIsSubmittingKey(true);
     try {
-      if (keyStatus === "missing") await onCreateKey(passphrase);
+      if (keyStatus === "missing" && keyAccess?.keyShareAvailable) {
+        await onSetupShared(identityPassword, passphrase);
+      } else if (keyStatus === "missing" && keyAccess?.canInitialize) {
+        await onCreateKey(passphrase);
+      }
       else await onUnlock(passphrase);
+      setIdentityPassword("");
       setPassphrase("");
       setConfirmPassphrase("");
       setSyncStatus("idle");
@@ -95,7 +106,13 @@ export function WorkspaceSyncControls({
         </div>
         <p>
           {keyStatus === "missing"
-            ? "Create a stable local workspace key before the first sync."
+            ? keyAccess === null
+              ? "Checking whether this workspace can be initialized or has a key share…"
+              : keyAccess.keyShareAvailable
+              ? "Set up encrypted workspace access from your personal key share."
+              : keyAccess.canInitialize
+                ? "Create the first stable key for this new empty workspace."
+                : "This device has no local key and no encrypted key share is available."
             : keyStatus === "locked"
               ? "Unlock the local workspace key to encrypt and sync pending notes."
               : keyStatus === "checking"
@@ -108,7 +125,63 @@ export function WorkspaceSyncControls({
         </p>
       </div>
 
-      {keyStatus === "missing" || keyStatus === "locked" ? (
+      {keyStatus === "missing" && keyAccess === null ? (
+        <div className="info-callout" role="status">Checking encrypted access…</div>
+      ) : keyStatus === "missing" && keyAccess?.keyShareAvailable ? (
+        <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
+          <label>
+            Account password
+            <input
+              autoComplete="current-password"
+              disabled={isSubmittingKey}
+              maxLength={128}
+              minLength={12}
+              onChange={(event) => setIdentityPassword(event.target.value)}
+              required
+              type="password"
+              value={identityPassword}
+            />
+          </label>
+          <label>
+            New local unlock password
+            <input
+              autoComplete="new-password"
+              disabled={isSubmittingKey}
+              maxLength={128}
+              minLength={12}
+              onChange={(event) => setPassphrase(event.target.value)}
+              required
+              type="password"
+              value={passphrase}
+            />
+          </label>
+          <label>
+            Confirm unlock password
+            <input
+              autoComplete="new-password"
+              disabled={isSubmittingKey}
+              maxLength={128}
+              minLength={12}
+              onChange={(event) => setConfirmPassphrase(event.target.value)}
+              required
+              type="password"
+              value={confirmPassphrase}
+            />
+          </label>
+          <button className="button button--primary" disabled={isSubmittingKey} type="submit">
+            {isSubmittingKey ? "Setting up…" : "Set up encrypted workspace access"}
+          </button>
+          <small>
+            Your account password unlocks your client-only identity key. Choose an independent
+            password for this workspace on this browser; neither password is shared with the owner.
+          </small>
+        </form>
+      ) : keyStatus === "missing" && !keyAccess?.canInitialize ? (
+        <div className="warning-callout" role="status">
+          Ask a workspace owner to create or refresh your encrypted workspace key share. Do not
+          create a replacement key for an existing workspace.
+        </div>
+      ) : keyStatus === "missing" || keyStatus === "locked" ? (
         <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
           <label>
             Local unlock password
@@ -147,8 +220,8 @@ export function WorkspaceSyncControls({
           </button>
           {keyStatus === "missing" ? (
             <small>
-              This password and key stay on this browser profile. There is no recovery or
-              multi-device key sharing in v1.
+              This initializes the workspace once. The password stays on this browser profile;
+              there is no identity or workspace-key recovery in v1.
             </small>
           ) : null}
         </form>

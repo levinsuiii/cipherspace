@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { api } from "../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
+import { EncryptionIdentitySetup } from "../components/EncryptionIdentitySetup";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 import { formatDate } from "../utils";
@@ -54,6 +55,8 @@ export function WorkspacesPage() {
           <p>Create a workspace or return to one you already belong to.</p>
         </div>
       </header>
+
+      <EncryptionIdentitySetup />
 
       <div className="split-layout">
         <div>

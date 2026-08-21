@@ -1,6 +1,6 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, encrypted immutable note versions, encrypted note-scoped comments and replies, an isolated client crypto package, and the first push/pull note sync protocol.
+CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, RSA-OAEP recipient-specific workspace-key sharing, encrypted immutable note versions, encrypted note-scoped comments and replies, an isolated client crypto package, and the first push/pull note sync protocol.
 
 ## Prerequisites
 
@@ -193,11 +193,15 @@ npm run start:deploy
 
 The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, encrypted note discussions, and manual conflict resolution. Workspaces, encrypted local note envelopes, cached encrypted versions, pending changes, sync cursors, retry state, and encrypted conflict snapshots are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators. Comments use React Query and the authenticated API directly; they are not currently durable offline data or part of note push/pull sync.
 
-The workspace UI provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected key envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. Note creates, edits, and conflict resolutions are encrypted through `@cipherspace/crypto` before the local note and pending operation are committed, so sync reuses the durable ciphertext and never needs a plaintext queue payload.
+The workspace UI provides local key creation/unlock, recipient setup, and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under each user's separate local workspace password, and only protected key envelopes are persisted in IndexedDB. After reload, each user enters their own password to recover the same logical workspace key; the unwrapped key remains in memory only. Note creates, edits, and conflict resolutions are encrypted through `@cipherspace/crypto` before the local note and pending operation are committed, so sync reuses durable ciphertext and never needs a plaintext queue payload.
 
-This v1 key is tied to the current user, workspace, and browser profile. There is no recovery or member/device key sharing yet. Titles and bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the unwrapped key from memory. Note IDs, workspace IDs, timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible in the browser profile.
+Each user also has a WebCrypto RSA-OAEP identity using a 3072-bit RSA key and SHA-256. The backend stores the versioned SPKI public key. The PKCS8 private key is encrypted locally with AES-256-GCM under PBKDF2-HMAC-SHA-256 using the account password and is never uploaded. When an owner adds an existing user, the unlocked client wraps the existing 32-byte workspace key with that recipient's public key and uploads only the 384-byte RSA-OAEP ciphertext. The recipient decrypts the share locally, then protects the recovered workspace key with a new local workspace password that may differ from the owner's.
 
-Opening a local or server-backed note decrypts its envelope only after the workspace is unlocked. Plaintext is held in React memory while displayed. Selecting **Save local change** creates a new encrypted local envelope and encrypted pending operation; it does not persist the title or body as plaintext. A locked workspace replaces titles with **Encrypted note**, clears editor values, and disables editing. A wrong workspace key produces a generic decryption error without exposing partial content. IndexedDB schema version 5 lazily encrypts older plaintext note, queue, and conflict payloads after the correct workspace key is unlocked.
+PostgreSQL stores accounts/password hashes, sessions/token digests, public identity keys, workspace/membership roles, recipient-specific encrypted workspace-key shares, encrypted note/comment envelopes, and operational metadata. It does not store plaintext note/comment content, plaintext workspace keys, plaintext or locally protected identity private keys, account passwords, or local workspace passwords. IndexedDB stores encrypted note/sync/conflict data, protected workspace-key envelopes, and the locally protected identity-private-key envelope. Unwrapped keys and decrypted content remain client-memory-only while unlocked.
+
+There is no identity/private-key transfer, account or workspace-key recovery, key rotation, cryptographic revocation, sender signature, device verification, or key transparency. Titles and bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the unwrapped workspace key from memory. Note IDs, workspace IDs, membership, identity/share metadata, timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible.
+
+Opening a local or server-backed note decrypts its envelope only after the workspace is unlocked. Plaintext is held in React memory while displayed. Selecting **Save local change** creates a new encrypted local envelope and encrypted pending operation; it does not persist the title or body as plaintext. A locked workspace replaces titles with **Encrypted note**, clears editor values, and disables editing. A wrong workspace or identity private key produces a generic decryption error without exposing partial content. IndexedDB schema version 5 lazily encrypts older plaintext note, queue, and conflict payloads after the correct workspace key is unlocked; schema version 6 adds protected user identities without replacing existing workspace keys.
 
 ## Security
 
@@ -211,6 +215,7 @@ CipherSpace applies the following practical hardening controls:
 - Request bodies default to 1,500,000 bytes globally, while auth bodies are capped at 4 KiB. Malformed, oversized, unsupported, and unexpected requests receive safe error bodies without validation internals or stack traces.
 - Fastify logs request metadata but not bodies. Cookie, authorization, and `Set-Cookie` headers are explicitly redacted. Unexpected-error logging records only an error class, request ID, method, and route—not error messages or payloads.
 - Workspace, membership, note, version, comment, sync-push, and sync-pull operations enforce current membership. Viewers are read-only; owners and editors may create/update notes and comments; only owners delete notes or manage members; comment deletion follows the documented author/moderator rule.
+- Public identity registration accepts only validated RSA-3072 SPKI keys. Invitee-key lookup is owner-only, membership plus its first encrypted key share is atomic, and a member can retrieve only their own active share.
 - Note and comment API inputs must use the implemented version 1 AES-GCM envelope shape, including a 12-byte nonce, at least a 16-byte authenticated ciphertext/tag, canonical base64, and bounded fields. The server still cannot prove that submitted opaque bytes encrypt meaningful content.
 - Locking removes the workspace key and clears note titles, editor values, comment drafts/content, and conflict/merge plaintext from rendered React state. Plaintext can still exist transiently in browser/runtime memory while unlocked and cannot be reliably zeroized as JavaScript strings.
 - Moving the page or installed PWA to the background triggers the same lock immediately. There is no visible-app inactivity timeout, and browsers may delay or terminate background lifecycle events; users should still select **Lock** before handing an unlocked device to someone else.
@@ -220,7 +225,29 @@ CipherSpace applies the following practical hardening controls:
 
 `SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` and optional `MIGRATIONS_DATABASE_URL` must be PostgreSQL URLs. Pool size, proxy trust, cookie policy, body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
 
-Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; there is no key sharing, recovery, rotation, revocation, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter; a malicious delivered frontend, extension, same-origin script, or compromised unlocked device can access plaintext and key material. See `docs/THREAT_MODEL.md` for the complete boundary.
+Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; there is no identity/device transfer, recovery, rotation, cryptographic revocation, key transparency, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter. Removing a member cannot erase data or keys already obtained. A malicious server can substitute public keys or deliver modified client code, and an extension, same-origin script, or compromised unlocked device can access plaintext and key material. See `docs/THREAT_MODEL.md` for the complete boundary.
+
+## Manual two-user encrypted-sharing test
+
+Use two separate browser profiles so IndexedDB, cookies, identity private keys, and local workspace passwords are isolated. User B must register once before invitation so their public identity exists; B can then sign out until the owner shares access.
+
+1. Start PostgreSQL, run `npm run db:migrate`, then start the API and web frontend.
+2. In browser profile B, register `user-b@example.test` with a 12+ character account password. Registration creates B's RSA identity, stores only its public key on the backend, and protects the private key in profile B. Sign out.
+3. In browser profile A, register `user-a@example.test` with a different account password.
+4. Create a workspace, open it, and choose a local workspace unlock password that differs from both account passwords.
+5. Create a note with a unique title/body, save it locally, select **Sync**, then add an encrypted comment and optional reply.
+6. Keep A's workspace unlocked, open **Overview**, enter B's registered email, select `editor` or `viewer`, and choose **Add member**. Confirm B shows `key share available`. A never enters or reveals A's local workspace password during this step.
+7. In profile B, sign in again. The workspace should appear in B's list because membership is active.
+8. Open the workspace. Because B has no local workspace-key envelope yet, the page must show **Set up encrypted workspace access**, not **Create and unlock key**.
+9. Enter B's account password to unlock B's client-only identity private key. Enter and confirm a new local workspace password different from A's, then complete setup.
+10. Confirm the workspace unlocks and A's existing note title/body and encrypted comment/reply decrypt correctly.
+11. Lock and unlock in profile B using only B's local workspace password. A's password must never be needed.
+12. If B is an editor, edit the note or create another note, sync, and add a comment. If B is a viewer, confirm editing, note/comment creation, deletion, member management, and mutating sync are unavailable or denied.
+13. In profile A, select **Sync** and confirm B's permitted note change appears; refresh the comment discussion and confirm B's comment appears.
+14. In profile A, make an offline edit while B edits and syncs the same note, then sync A. Confirm the existing explicit conflict flow still preserves both encrypted snapshots and resolves normally.
+15. As a non-member third account or unauthenticated request, call the workspace, note, comment, sync, and `GET /api/workspaces/<id>/key-share` endpoints. Confirm workspace-scoped reads return `404 workspace_not_found`.
+16. Inspect PostgreSQL: `user_crypto_identities` must contain public keys only; `workspace_key_shares.encrypted_workspace_key` must be a 512-character canonical-base64 RSA ciphertext, not the 44-character base64 form of a raw 32-byte AES key. `note_versions` and `encrypted_comments` must contain ciphertext rather than the unique plaintext markers.
+17. Remove B as a member and confirm future API/sync/key-share retrieval is denied. Treat B's previously decrypted data as still accessible on B's device; v1 removal is not cryptographic revocation.
 
 ## Manual security hardening check
 
@@ -339,7 +366,7 @@ All workspace endpoints require the `cipherspace_session` cookie. A workspace cr
 - `editor`: read the workspace, create or update notes, create comments, and soft-delete their own comments, but cannot manage members or delete notes.
 - `viewer`: read the workspace, encrypted note data, and comments, but cannot create, update, or delete notes or comments.
 
-Workspace names, member email addresses, and roles are server-visible metadata. Adding by email or user ID immediately adds an existing CipherSpace account; pending invitations and email delivery are not implemented.
+Workspace names, member email addresses, roles, public identity keys, and key-share metadata are server-visible. Adding by email immediately adds an existing account only after the unlocked owner client has encrypted the existing workspace key for that user's registered public key. Pending invitations and email delivery are not implemented.
 
 The following PowerShell-compatible examples assume an authenticated owner cookie in `owner-cookies.txt` and an authenticated member cookie in `member-cookies.txt`:
 
@@ -355,10 +382,10 @@ $workspaceId = "00000000-0000-4000-8000-000000000000"
 # List only workspaces belonging to the authenticated user
 curl.exe -i -b owner-cookies.txt http://localhost:3000/api/workspaces
 
-# Add an existing account as an editor (userId may be used instead of email)
-curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
-  --data '{"email":"member@example.com","role":"editor"}' `
-  "http://localhost:3000/api/workspaces/$workspaceId/members"
+# Look up an existing account's public key as an owner.
+# Use the browser UI for the subsequent WebCrypto wrap and atomic membership/key-share POST.
+curl.exe -i -b owner-cookies.txt `
+  "http://localhost:3000/api/workspaces/$workspaceId/invitee-key?email=member%40example.com"
 
 # Read workspace details using the new member's session
 curl.exe -i -b member-cookies.txt "http://localhost:3000/api/workspaces/$workspaceId"
@@ -382,16 +409,22 @@ Supported workspace endpoints are:
 - `POST /api/workspaces`
 - `GET /api/workspaces`
 - `GET /api/workspaces/:id`
+- `GET /api/crypto/identity`
+- `PUT /api/crypto/identity`
+- `GET /api/workspaces/:id/invitee-key`
+- `GET /api/workspaces/:id/key-access`
+- `GET /api/workspaces/:id/key-share`
+- `PUT /api/workspaces/:id/key-shares/:userId`
 - `POST /api/workspaces/:id/members`
 - `GET /api/workspaces/:id/members`
 - `PATCH /api/workspaces/:id/members/:userId`
 - `DELETE /api/workspaces/:id/members/:userId`
 
-Non-members receive `404` for workspace-scoped reads so the API does not disclose whether a workspace ID exists. Editors and viewers receive `403` when attempting member management. The final owner cannot be removed or changed to another role.
+Non-members receive `404` for workspace-scoped reads, including key-share retrieval, so the API does not disclose whether a workspace ID exists. Editors and viewers receive `403` when attempting member management or invitee-key lookup. The final owner cannot be removed or changed to another role. Removing a member marks the backend share revoked but does not erase keys or content already obtained.
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note encryption/decryption, and local password protection for the workspace key. The React workspace UI creates/unlocks that local key and passes it to manual sync. Member/device key sharing, recovery, rotation, and revocation are not implemented.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note/comment encryption, local password protection, RSA-OAEP user identities, and recipient-specific workspace-key wrapping. The React workspace UI creates, shares, receives, or unlocks that key and passes it to manual sync. Identity/device transfer, recovery, rotation, and cryptographic revocation are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -492,5 +525,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The responsive frontend, installable PWA shell, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The responsive frontend, installable PWA shell, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, RSA-OAEP multi-user workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local workspace unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Identity/device transfer, recovery, rotation, cryptographic revocation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

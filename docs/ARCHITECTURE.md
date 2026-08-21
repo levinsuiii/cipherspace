@@ -51,10 +51,11 @@ Suggested ownership:
 
 Core entities:
 
-- User: account identity used for authentication and membership.
+- User: account identity used for authentication and membership, plus versioned public encryption identities.
 - Device: client installation that creates local operations and participates in sync.
 - Workspace: collaboration boundary containing notes and members.
-- WorkspaceMember: user role and future member-wrapped access material for a workspace.
+- WorkspaceMember: user role for a workspace.
+- WorkspaceKeyShare: one recipient-specific RSA-OAEP ciphertext containing the existing workspace key.
 - Invitation: pending membership offer by email.
 - Note: stable identity and server-visible metadata for an encrypted document.
 - NoteVersion: immutable encrypted content snapshot or operation record.
@@ -98,6 +99,11 @@ Initial API areas:
 - `GET /api/workspaces/:workspaceId/members` (implemented)
 - `PATCH /api/workspaces/:workspaceId/members/:userId` (implemented)
 - `DELETE /api/workspaces/:workspaceId/members/:userId` (implemented)
+- `GET /api/crypto/identity` and `PUT /api/crypto/identity` (implemented)
+- `GET /api/workspaces/:workspaceId/invitee-key` (implemented for owners)
+- `GET /api/workspaces/:workspaceId/key-access` (implemented)
+- `GET /api/workspaces/:workspaceId/key-share` (implemented for the current member's share)
+- `PUT /api/workspaces/:workspaceId/key-shares/:userId` (implemented for owner repair/provisioning)
 - `POST /api/workspaces/:workspaceId/notes` (implemented)
 - `GET /api/workspaces/:workspaceId/notes` (implemented)
 - `GET /api/workspaces/:workspaceId/notes/:noteId` (implemented)
@@ -179,14 +185,17 @@ The implemented v1 primitives are:
 - Protect a workspace key locally with an independently chosen unlock password using PBKDF2-HMAC-SHA-256 with a random 128-bit salt and 600,000 iterations, then AES-256-GCM wrapping with a fresh 96-bit nonce and a 128-bit tag.
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
+- Generate a per-user 3072-bit RSA-OAEP identity with SHA-256 in WebCrypto. Upload only canonical-base64 SPKI public keys; encrypt the PKCS8 private key locally with PBKDF2-HMAC-SHA-256 and AES-256-GCM under the account password used when the identity was created.
+- Wrap the existing 32-byte workspace key directly with the recipient's RSA-OAEP public key. The standard OAEP label binds format version, workspace ID, recipient user ID, and recipient key version.
+- Unwrap key shares only in the recipient browser, then protect the recovered workspace key with that recipient's independently chosen local workspace unlock password.
 
 The package envelope is intentionally transport-independent. The frontend maps its `ciphertext` and `nonce` fields into the API's `encryptedContent` and `contentNonce` fields and supplies the fixed version 1 key identifier in `encryptionMetadata.keyId`; local IndexedDB records retain the package envelope directly.
 
-The v1 local unlock password is separate from the account password and is never stored or sent to the backend. It derives only a wrapping key; it is not used directly as note key material. There is no recovery, parameter migration, multi-device transfer, or member key-sharing flow yet. Losing the password or browser profile can make server ciphertext unavailable to this client.
+The workspace unlock password is separate from the account password and is never stored or sent to the backend. It derives only a local wrapping key; it is not used directly as note key material. The account password is also used locally to protect the user's identity private key after normal authentication, but neither the plaintext private key nor its protected local envelope is uploaded. There is no identity-key recovery, parameter migration, device transfer, key rotation, or cryptographic revocation. Losing the relevant password or browser profile can make server ciphertext unavailable to this client.
 
 ## Database Schema Plan
 
-The backend foundation implements the first persistence subset as `users`, `sessions`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, `encrypted_comments`, and `sync_changes`. The encrypted entity names make the intended ciphertext-only content boundary explicit. The remaining tables below are still planned and may be refined through additive migrations.
+The backend foundation implements `users`, `sessions`, `user_crypto_identities`, `workspaces`, `workspace_members`, `workspace_key_shares`, `encrypted_notes`, `note_versions`, `encrypted_comments`, and `sync_changes`. The encrypted entity names make the intended ciphertext-only content boundary explicit. Remaining planned tables may be refined through additive migrations.
 
 Planned tables:
 
@@ -194,7 +203,9 @@ Planned tables:
 - `sessions`: id, user_id, token_hash, expires_at, created_at.
 - `devices`: id, user_id, label, created_at, last_seen_at.
 - `workspaces`: id, creator_user_id, name, created_at, updated_at.
-- `workspace_members`: workspace_id, user_id, role (`owner`, `editor`, or `viewer`), wrapped_workspace_key, key_wrap_algorithm, added_at.
+- `workspace_members`: workspace_id, user_id, role (`owner`, `editor`, or `viewer`), added_at.
+- `user_crypto_identities`: user_id, public_key, algorithm, key_version, created_at, updated_at. It never contains a private key.
+- `workspace_key_shares`: workspace_id, recipient user/version, sender user/version, RSA-OAEP ciphertext, algorithm, created_at, revoked_at.
 - `workspace_invitations`: id, workspace_id, email, role, token_hash, expires_at, accepted_at, created_at.
 - `encrypted_notes`: id, workspace_id, creator_user_id, encrypted_title, current_version_id, deleted_at, created_at, updated_at.
 - `note_versions`: id, note_id, version_number, parent_version_id, author_user_id, device_id, encrypted_payload, payload_nonce, payload_key_id, client_version, created_at.
@@ -208,7 +219,7 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 
 ## Implemented Local Storage
 
-`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 5 contains:
+`apps/web/src/local-storage` uses IndexedDB through Dexie. Records are scoped by the authenticated user ID so accounts using the same browser do not share query results. Schema version 6 contains:
 
 - `workspaces`: workspace metadata and the current user's cached role.
 - `notes`: stable note identity, encrypted local title/body envelope, tombstone, local revision, base version, and server-visible note metadata.
@@ -217,6 +228,7 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 - `local_sync_metadata`: per-workspace client ID, opaque pull cursor, last-successful-sync timestamp, and last sync error.
 - `conflicts`: encrypted local and remote snapshots created by push or pull conflict detection, plus durable resolution status, action, timestamp, encrypted selected payload, and replacement pending-operation ID.
 - `workspace_keys`: one user/workspace-scoped protected-key envelope containing only ciphertext, KDF parameters, salt, nonce, and authenticated format metadata.
+- `user_crypto_identities`: one user-scoped public identity plus an AES-GCM-encrypted PKCS8 private-key envelope. No plaintext private key is persisted.
 
 Create/edit content is encrypted with a fresh nonce before note mutations and pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest encrypted envelope, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
 
@@ -267,3 +279,7 @@ Sensitive local storage rules:
 - Use one responsive web application for desktop/mobile and install it through standards-based PWA metadata rather than a native wrapper.
 - Restrict service-worker caching to public static application resources. Keep API/auth/sync/comment responses and encrypted workspace data out of Cache Storage, and do not implement background sync.
 - Lock every in-memory workspace key when the document becomes hidden or receives `pagehide`; guard asynchronous unlock completion so a backgrounded app cannot become unlocked afterward.
+- Use RSA-OAEP with a 3072-bit modulus and SHA-256 for v1 recipient-specific workspace-key wrapping. This is a direct WebCrypto operation over the 32-byte AES key, avoiding a custom hybrid encryption construction.
+- Require owner-authorized public-key lookup and atomically create membership plus its first active key share. Permit an owner to repair a missing share for a legacy membership without replacing the workspace key.
+- Refuse client-side key initialization unless the backend confirms the workspace has one owner, no encrypted notes, and no active key shares. Existing or shared workspaces without a local key must receive a share rather than silently generate a new key.
+- Treat member removal as authorization revocation only. Mark the server key-share record revoked, but do not claim that prior ciphertext, plaintext, or keys are erased from a former member's device.

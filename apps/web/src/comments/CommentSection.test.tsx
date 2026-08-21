@@ -84,6 +84,7 @@ describe("CommentSection", () => {
         {
           addedAt: "2026-08-20T10:00:00.000Z",
           email: "editor@example.com",
+          keyShareStatus: "available",
           role: "editor",
           userId: existing.authorId
         }

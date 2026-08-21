@@ -6,6 +6,7 @@ import type {
   LocalNoteVersion,
   LocalProtectedWorkspaceKey,
   LocalSyncMetadata,
+  LocalStoredUserCryptoIdentity,
   LocalWorkspace,
   PendingChange
 } from "./types";
@@ -16,6 +17,7 @@ export class CipherSpaceLocalDatabase extends Dexie {
   note_versions!: EntityTable<LocalNoteVersion, "key">;
   notes!: EntityTable<LocalNote, "key">;
   pending_changes!: EntityTable<PendingChange, "id">;
+  user_crypto_identities!: EntityTable<LocalStoredUserCryptoIdentity, "key">;
   workspace_keys!: EntityTable<LocalProtectedWorkspaceKey, "key">;
   workspaces!: EntityTable<LocalWorkspace, "key">;
 
@@ -132,6 +134,21 @@ export class CipherSpaceLocalDatabase extends Dexie {
             conflict.resolved_encrypted_payload = null;
           });
       });
+
+    this.version(6).stores({
+      conflicts:
+        "key, id, user_id, workspace_id, note_id, pending_change_id, status, [user_id+workspace_id], [user_id+note_id]",
+      local_sync_metadata: "key, user_id, workspace_id, [user_id+workspace_id]",
+      note_versions:
+        "key, user_id, workspace_id, note_id, id, [user_id+note_id], [user_id+workspace_id]",
+      notes:
+        "key, user_id, workspace_id, id, [user_id+id], [user_id+workspace_id]",
+      pending_changes:
+        "id, user_id, workspace_id, note_id, operation_type, status, [user_id+note_id], [user_id+workspace_id], [user_id+status]",
+      user_crypto_identities: "key, user_id",
+      workspace_keys: "key, user_id, workspace_id, [user_id+workspace_id]",
+      workspaces: "key, user_id, id, [user_id+id]"
+    });
   }
 }
 

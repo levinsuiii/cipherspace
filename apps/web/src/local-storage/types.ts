@@ -1,5 +1,9 @@
 import type { WorkspaceRole } from "../api/types";
-import type { EncryptedNotePayload, ProtectedWorkspaceKey } from "@cipherspace/crypto";
+import type {
+  EncryptedNotePayload,
+  LocalUserCryptoIdentity,
+  ProtectedWorkspaceKey
+} from "@cipherspace/crypto";
 
 export type PendingChangeOperation = "create_note" | "update_note" | "delete_note";
 export type PendingChangeStatus =
@@ -126,4 +130,11 @@ export interface LocalProtectedWorkspaceKey {
   updated_at: string;
   user_id: string;
   workspace_id: string;
+}
+
+export interface LocalStoredUserCryptoIdentity extends LocalUserCryptoIdentity {
+  created_at: string;
+  key: string;
+  updated_at: string;
+  user_id: string;
 }

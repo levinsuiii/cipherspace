@@ -17,8 +17,45 @@ export interface Workspace {
 export interface WorkspaceMember {
   addedAt: string;
   email: string;
+  keyShareStatus: "available" | "missing";
   role: WorkspaceRole;
   userId: string;
+}
+
+export const userIdentityAlgorithm = "RSA-OAEP-3072-SHA256" as const;
+
+export interface UserCryptoIdentity {
+  algorithm: typeof userIdentityAlgorithm;
+  createdAt: string;
+  keyVersion: number;
+  publicKey: string;
+  updatedAt: string;
+  userId: string;
+}
+
+export interface InviteePublicKey {
+  email: string;
+  identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">;
+  userId: string;
+}
+
+export interface EncryptedWorkspaceKeyInput {
+  algorithm: typeof userIdentityAlgorithm;
+  encryptedWorkspaceKey: string;
+  recipientKeyVersion: number;
+}
+
+export interface WorkspaceKeyShare extends EncryptedWorkspaceKeyInput {
+  createdAt: string;
+  senderKeyVersion: number;
+  senderUserId: string;
+  userId: string;
+  workspaceId: string;
+}
+
+export interface WorkspaceKeyAccess {
+  canInitialize: boolean;
+  keyShareAvailable: boolean;
 }
 
 export interface EncryptionMetadata {

@@ -1,4 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
+import {
+  unlockUserCryptoIdentity,
+  unwrapWorkspaceKeyShare,
+  wrapWorkspaceKeyForRecipient
+} from "@cipherspace/crypto";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 
@@ -10,6 +15,8 @@ import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 import { NoteSyncEngine } from "../sync/engine";
+import { useAuth } from "../auth/AuthContext";
+import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
 
 export interface WorkspaceOutletContext {
   workspace: Workspace;
@@ -17,6 +24,7 @@ export interface WorkspaceOutletContext {
 
 export function WorkspaceLayout() {
   const { workspaceId = "" } = useParams();
+  const { user } = useAuth();
   const localData = useLocalData();
   const workspaceKey = useWorkspaceKey(workspaceId);
   const [localEncryptionError, setLocalEncryptionError] = useState<string | null>(null);
@@ -44,6 +52,12 @@ export function WorkspaceLayout() {
       await localData.cacheWorkspace(result.workspace);
       return result;
     },
+    retry: false
+  });
+  const keyAccessQuery = useQuery({
+    enabled: Boolean(workspaceId),
+    queryKey: ["workspaces", workspaceId, "key-access"],
+    queryFn: () => api.workspaces.getKeyAccess(workspaceId),
     retry: false
   });
 
@@ -78,6 +92,55 @@ export function WorkspaceLayout() {
       : undefined);
   const workspaceError = workspaceQuery.error;
   const serverUnavailable = workspaceError instanceof TypeError;
+
+  const requireLocalIdentity = async () => {
+    if (!user) throw new Error("Sign in before using encrypted workspace sharing.");
+    const identity = await readLocalUserCryptoIdentity(user.id);
+    if (!identity) {
+      throw new Error("Set up your encryption identity from the workspaces page first.");
+    }
+    return identity;
+  };
+
+  const createInitialWorkspaceKey = async (passphrase: string) => {
+    const identity = await requireLocalIdentity();
+    await workspaceKey.create(passphrase);
+    const key = await workspaceKey.getKey();
+    const share = await wrapWorkspaceKeyForRecipient(key, identity, {
+      recipientKeyVersion: identity.keyVersion,
+      recipientUserId: user!.id,
+      workspaceId
+    });
+    await api.workspaces.putKeyShare(workspaceId, user!.id, {
+      algorithm: share.algorithm,
+      encryptedWorkspaceKey: share.ciphertext,
+      recipientKeyVersion: share.recipientKeyVersion
+    });
+    await keyAccessQuery.refetch();
+  };
+
+  const setupSharedWorkspace = async (identityPassword: string, passphrase: string) => {
+    const identity = await requireLocalIdentity();
+    const [privateKey, result] = await Promise.all([
+      unlockUserCryptoIdentity(identity, identityPassword, { userId: user!.id }),
+      api.workspaces.getOwnKeyShare(workspaceId)
+    ]);
+    const share = result.keyShare;
+    const workspaceCryptoKey = await unwrapWorkspaceKeyShare(
+      {
+        algorithm: share.algorithm,
+        ciphertext: share.encryptedWorkspaceKey,
+        recipientKeyVersion: share.recipientKeyVersion
+      },
+      privateKey,
+      {
+        recipientKeyVersion: share.recipientKeyVersion,
+        recipientUserId: user!.id,
+        workspaceId
+      }
+    );
+    await workspaceKey.storeShared(workspaceCryptoKey, passphrase);
+  };
 
   if (!workspace && (workspaceQuery.isLoading || cachedWorkspaceQuery.isLoading)) {
     return <LoadingState label="Loading workspace…" />;
@@ -125,9 +188,11 @@ export function WorkspaceLayout() {
       <WorkspaceSyncControls
         conflictCount={conflictsQuery.data ?? 0}
         keyStatus={workspaceKey.status}
-        onCreateKey={workspaceKey.create}
+        keyAccess={keyAccessQuery.data?.keyAccess ?? null}
+        onCreateKey={createInitialWorkspaceKey}
         onLock={workspaceKey.lock}
         onSync={() => syncEngine.syncWorkspace(workspace.id)}
+        onSetupShared={setupSharedWorkspace}
         onUnlock={workspaceKey.unlock}
         pendingCount={pendingChangesQuery.data ?? 0}
       />

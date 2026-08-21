@@ -19,7 +19,7 @@ The first protocol is implemented:
 - The workspace UI can create or unlock a stable, locally protected workspace key and invoke the sync engine manually.
 - Manual sync reports `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`; live pending and conflict counts update after sync and resolution transitions.
 
-Automatic merging, member/device key sharing, recovery, rotation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. Create/edit UI requires an unlocked `CryptoKey`, encrypts through `@cipherspace/crypto` before IndexedDB persistence, and never gives the sync engine a plaintext draft or raw workspace key.
+Automatic merging, identity/device transfer, recovery, rotation, cryptographic revocation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. Create/edit UI requires an unlocked `CryptoKey`, encrypts through `@cipherspace/crypto` before IndexedDB persistence, and never gives the sync engine a plaintext draft or raw workspace key.
 
 ## Goals
 
@@ -207,9 +207,11 @@ Each attempt stores `attempt_count`, `last_attempt_at`, and `last_error`. If a u
 
 The server validates envelope shape, base64 encoding, and size, but treats ciphertext as opaque. The client sync helper calls `encryptNoteContent()` from `@cipherspace/crypto`; it does not implement cryptography itself.
 
-The local-only v1 key provider creates one random AES-256-GCM workspace key and immediately protects it with an independently chosen local unlock password. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key. A fresh 96-bit nonce is used for the key wrap, and authenticated additional data binds the protection version, user ID, and workspace ID. IndexedDB schema version 3 stores only the versioned protected-key envelope; the raw/unwrapped key exists only in memory while unlocked.
+The v1 key provider creates one random AES-256-GCM workspace key and immediately protects the creator's local copy with an independently chosen local unlock password. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key. A fresh 96-bit nonce is used for the key wrap, and authenticated additional data binds the protection version, user ID, and workspace ID. IndexedDB stores only the versioned protected-key envelope; the raw/unwrapped key exists only in memory while unlocked.
 
-After reload, the workspace is `locked` and the same local unlock password is required to unwrap the persisted key. The account password is not reused. The password, derived key, and raw workspace key are not sent to or stored by the backend. This is a single-browser-profile bootstrap model: member sharing, another-device provisioning, recovery, key rotation, and revocation are explicitly absent.
+For another member, the owner's unlocked client RSA-OAEP-wraps that same workspace key with the member's registered RSA-3072/SHA-256 public identity. The backend stores only the recipient-specific ciphertext and key/version metadata. The recipient unlocks their AES-GCM-protected identity private key locally with their account password, unwraps the share, and protects the recovered workspace key under their own local workspace password. The account password is not used as note key material, the owner's local password is never shared, and no plaintext workspace or private identity key is sent to the backend.
+
+After reload, the workspace is `locked` and each user enters their own local workspace password. Identity/device transfer, recovery, key rotation, and cryptographic revocation are explicitly absent. This provisioning step does not alter note sync envelope or cursor semantics.
 
 ## Delete Semantics
 
@@ -221,13 +223,13 @@ Deletes are server tombstones. An accepted delete records the current base versi
 - CRDTs or Operational Transform.
 - WebSockets, real-time collaboration, or push notifications.
 - Background/service-worker sync.
-- Workspace-key sharing, recovery, rotation, or revocation.
+- Identity/device transfer, recovery, key rotation, or cryptographic revocation.
 - Offline comment persistence, comment sync, or comment conflicts.
 - Version restore.
 
 ## Backward Awareness
 
 - PostgreSQL migration `0005_note_sync_protocol.sql` adds durable idempotency outcomes.
-- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys. Schema version 4 adds durable resolution metadata. Schema version 5 adds encrypted local/resolved payload fields; legacy plaintext content is encrypted and cleared lazily after unlock because schema upgrade code has no workspace key.
+- IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys. Schema version 4 adds durable resolution metadata. Schema version 5 adds encrypted local/resolved payload fields; legacy plaintext content is encrypted and cleared lazily after unlock because schema upgrade code has no workspace key. Schema version 6 adds locally protected user identity records without changing existing workspace-key envelopes.
 - Envelope version 1 and cursor version 1 are explicit.
 - Future persisted-format changes require additive database migrations and compatibility notes.

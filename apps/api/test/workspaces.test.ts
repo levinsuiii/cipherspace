@@ -11,10 +11,18 @@ import { hashSessionToken, sessionCookieName } from "../src/auth/session.js";
 import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import type { Database } from "../src/database/database.js";
+import {
+  userIdentityAlgorithm,
+  type IdentityRepository,
+  type RegisterIdentityResult,
+  type StoredUserCryptoIdentity
+} from "../src/identities/repository.js";
 import type {
   AddMemberResult,
   RemoveMemberResult,
+  PutKeyShareResult,
   StoredWorkspace,
+  StoredWorkspaceKeyShare,
   StoredWorkspaceMember,
   UpdateMemberResult,
   WorkspaceRepository,
@@ -95,6 +103,7 @@ interface InMemoryWorkspace {
 
 class InMemoryWorkspaceRepository implements WorkspaceRepository {
   private readonly memberships = new Map<string, StoredWorkspaceMember>();
+  private readonly keyShares = new Map<string, StoredWorkspaceKeyShare>();
   private readonly workspaces = new Map<string, InMemoryWorkspace>();
 
   public constructor(private readonly users: Map<string, StoredUser>) {}
@@ -118,6 +127,7 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     this.memberships.set(this.key(input.id, input.creatorUserId), {
       addedAt: now,
       email: user.email,
+      keyShareStatus: "missing",
       role: "owner",
       userId: input.creatorUserId
     });
@@ -155,18 +165,26 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
       .map(([, member]) => member);
   }
 
-  public async findUserByEmail(email: string): Promise<{ id: string } | null> {
+  public async findUserByEmail(email: string): Promise<{ email: string; id: string } | null> {
     const user = this.users.get(email.toLowerCase());
-    return user ? { id: user.id } : null;
+    return user ? { email: user.email, id: user.id } : null;
   }
 
-  public async findUserById(userId: string): Promise<{ id: string } | null> {
+  public async findUserById(userId: string): Promise<{ email: string; id: string } | null> {
     const user = [...this.users.values()].find(({ id }) => id === userId);
-    return user ? { id: user.id } : null;
+    return user ? { email: user.email, id: user.id } : null;
   }
 
   public async addMember(input: {
     actorUserId: string;
+    keyShare: {
+      algorithm: typeof userIdentityAlgorithm;
+      encryptedWorkspaceKey: string;
+      id: string;
+      recipientKeyVersion: number;
+      senderKeyVersion: number;
+      senderUserId: string;
+    };
     role: WorkspaceRole;
     targetUserId: string;
     workspaceId: string;
@@ -181,10 +199,72 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     this.memberships.set(key, {
       addedAt: now,
       email: user.email,
+      keyShareStatus: "available",
       role: input.role,
       userId: input.targetUserId
     });
+    this.keyShares.set(key, {
+      algorithm: input.keyShare.algorithm,
+      createdAt: now,
+      encryptedWorkspaceKey: input.keyShare.encryptedWorkspaceKey,
+      recipientKeyVersion: input.keyShare.recipientKeyVersion,
+      senderKeyVersion: input.keyShare.senderKeyVersion,
+      senderUserId: input.keyShare.senderUserId,
+      userId: input.targetUserId,
+      workspaceId: input.workspaceId
+    });
     return "added";
+  }
+
+  public async putKeyShare(input: {
+    actorUserId: string;
+    keyShare: {
+      algorithm: typeof userIdentityAlgorithm;
+      encryptedWorkspaceKey: string;
+      id: string;
+      recipientKeyVersion: number;
+      senderKeyVersion: number;
+      senderUserId: string;
+    };
+    targetUserId: string;
+    workspaceId: string;
+  }): Promise<PutKeyShareResult> {
+    if (!this.workspaces.has(input.workspaceId)) return "workspace_not_found";
+    if (this.memberships.get(this.key(input.workspaceId, input.actorUserId))?.role !== "owner") {
+      return "forbidden";
+    }
+    const memberKey = this.key(input.workspaceId, input.targetUserId);
+    const member = this.memberships.get(memberKey);
+    if (!member) return "member_not_found";
+    this.memberships.set(memberKey, { ...member, keyShareStatus: "available" });
+    this.keyShares.set(memberKey, {
+      algorithm: input.keyShare.algorithm,
+      createdAt: now,
+      encryptedWorkspaceKey: input.keyShare.encryptedWorkspaceKey,
+      recipientKeyVersion: input.keyShare.recipientKeyVersion,
+      senderKeyVersion: input.keyShare.senderKeyVersion,
+      senderUserId: input.keyShare.senderUserId,
+      userId: input.targetUserId,
+      workspaceId: input.workspaceId
+    });
+    return "stored";
+  }
+
+  public async getKeyShare(workspaceId: string, userId: string) {
+    if (!this.memberships.has(this.key(workspaceId, userId))) return null;
+    return this.keyShares.get(this.key(workspaceId, userId)) ?? null;
+  }
+
+  public async getKeyAccess(workspaceId: string, userId: string) {
+    const member = this.memberships.get(this.key(workspaceId, userId));
+    if (!member) return null;
+    return {
+      canInitialize:
+        member.role === "owner" &&
+        [...this.memberships.keys()].filter((key) => key.startsWith(`${workspaceId}:`)).length === 1 &&
+        ![...this.keyShares.keys()].some((key) => key.startsWith(`${workspaceId}:`)),
+      keyShareAvailable: this.keyShares.has(this.key(workspaceId, userId))
+    };
   }
 
   public async updateMemberRole(input: {
@@ -221,6 +301,7 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     if (!target) return "member_not_found";
     if (target.role === "owner" && this.ownerCount(input.workspaceId) === 1) return "last_owner";
     this.memberships.delete(key);
+    this.keyShares.delete(key);
     return "removed";
   }
 
@@ -228,6 +309,29 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     return [...this.memberships.entries()].filter(
       ([key, member]) => key.startsWith(`${workspaceId}:`) && member.role === "owner"
     ).length;
+  }
+}
+
+class InMemoryIdentityRepository implements IdentityRepository {
+  private readonly identities = new Map<string, StoredUserCryptoIdentity>();
+
+  public seed(userId: string): void {
+    this.identities.set(userId, {
+      algorithm: userIdentityAlgorithm,
+      createdAt: now,
+      keyVersion: 1,
+      publicKey: "unused-in-workspace-service-tests",
+      updatedAt: now,
+      userId
+    });
+  }
+
+  public async findCurrent(userId: string) {
+    return this.identities.get(userId) ?? null;
+  }
+
+  public async register(): Promise<RegisterIdentityResult> {
+    throw new Error("Not used by workspace tests");
   }
 }
 
@@ -239,6 +343,7 @@ const database: Database = {
 const apps: ReturnType<typeof buildApp>[] = [];
 let app: ReturnType<typeof buildApp>;
 let authRepository: InMemoryAuthRepository;
+let identityRepository: InMemoryIdentityRepository;
 let cookies: Record<keyof typeof ids, string>;
 
 beforeEach(() => {
@@ -249,10 +354,13 @@ beforeEach(() => {
     outsider: authRepository.seedUser(ids.outsider, "outsider@example.com"),
     viewer: authRepository.seedUser(ids.viewer, "viewer@example.com")
   };
+  identityRepository = new InMemoryIdentityRepository();
+  Object.values(ids).forEach((id) => identityRepository.seed(id));
   app = buildApp({
     authRepository,
     config: testConfig,
     database,
+    identityRepository,
     logger: false,
     workspaceRepository: new InMemoryWorkspaceRepository(authRepository.users)
   });
@@ -282,7 +390,14 @@ async function addMember(
   return app.inject({
     headers: { cookie },
     method: "POST",
-    payload,
+    payload: {
+      ...payload,
+      keyShare: {
+        algorithm: userIdentityAlgorithm,
+        encryptedWorkspaceKey: Buffer.alloc(384, 7).toString("base64"),
+        recipientKeyVersion: 1
+      }
+    },
     url: `/api/workspaces/${workspaceId}/members`
   });
 }
@@ -356,6 +471,61 @@ describe("workspace routes", () => {
         expect.objectContaining({ role: "viewer", userId: ids.viewer })
       ])
     );
+  });
+
+  it("returns recipient public-key data only to owners and stores only a wrapped workspace key", async () => {
+    const workspace = await createWorkspace();
+    const inviteeKey = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/invitee-key?email=editor%40example.com`
+    });
+    expect(inviteeKey.statusCode).toBe(200);
+    expect(inviteeKey.json().invitee).toMatchObject({
+      identity: { algorithm: userIdentityAlgorithm, keyVersion: 1 },
+      userId: ids.editor
+    });
+
+    const encryptedWorkspaceKey = Buffer.alloc(384, 9).toString("base64");
+    const added = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: {
+        email: "editor@example.com",
+        keyShare: {
+          algorithm: userIdentityAlgorithm,
+          encryptedWorkspaceKey,
+          recipientKeyVersion: 1
+        },
+        role: "editor"
+      },
+      url: `/api/workspaces/${workspace.id}/members`
+    });
+    expect(added.statusCode).toBe(201);
+
+    const recipientShare = await app.inject({
+      headers: { cookie: cookies.editor },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/key-share`
+    });
+    expect(recipientShare.statusCode).toBe(200);
+    expect(recipientShare.json().keyShare.encryptedWorkspaceKey).toBe(encryptedWorkspaceKey);
+    expect(recipientShare.json().keyShare.encryptedWorkspaceKey).not.toBe(
+      Buffer.alloc(32, 9).toString("base64")
+    );
+
+    const outsiderShare = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/key-share`
+    });
+    const editorLookup = await app.inject({
+      headers: { cookie: cookies.editor },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/invitee-key?email=viewer%40example.com`
+    });
+    expect(outsiderShare.statusCode).toBe(404);
+    expect(editorLookup.statusCode).toBe(403);
   });
 
   it("denies member management to non-owners", async () => {

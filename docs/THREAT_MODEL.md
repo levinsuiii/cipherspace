@@ -12,7 +12,11 @@ Comments use direct authenticated API calls and are not queued in IndexedDB or i
 
 The local note mutation boundary uses these primitives: when the key provider supplies an unlocked workspace `CryptoKey`, it serializes the title/body snapshot, encrypts it through `@cipherspace/crypto`, and atomically persists the same envelope in the local note and pending operation. The sync engine constructs requests only from durable encrypted envelopes and never receives or uploads a plaintext draft. The React UI can invoke sync manually while unlocked.
 
-The local-only v1 key flow generates one random workspace key, protects it under a separate local unlock password, and persists only the protected key envelope in user-scoped IndexedDB. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key; wrapping uses a fresh 96-bit nonce and binds the format, user ID, and workspace ID as authenticated additional data. The password and raw/unwrapped key are not persisted or sent to the backend, and the unwrapped `CryptoKey` exists only in browser memory while unlocked. Local note, pending-change, conflict, and resolved-conflict content uses the existing authenticated note envelope in IndexedDB. Hiding/backgrounding the document or receiving `pagehide` clears all unwrapped keys, and asynchronous create/unlock completion is rejected if a lock occurred while it was running. Member/device key sharing, recovery, rotation, revocation, and visible-app inactivity timeout remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
+The v1 sharing flow gives each user a WebCrypto RSA-OAEP identity with a 3072-bit modulus, SHA-256, public exponent 65537, and explicit key version. The SPKI public key is registered with the backend. The PKCS8 private key is encrypted locally with AES-256-GCM under PBKDF2-HMAC-SHA-256 using a random 128-bit salt, 600,000 iterations, and a fresh 96-bit nonce; the protected private-key envelope remains in user-scoped IndexedDB. Login/registration uses the account password locally to create or verify that envelope after normal authentication, but neither the plaintext private key nor its local protected envelope is uploaded.
+
+The workspace flow still generates one random AES-256-GCM key and protects each local copy under a separate per-user workspace unlock password. When an owner adds a registered user, the unlocked client directly RSA-OAEP-wraps the existing 32-byte workspace key with the recipient public key. The standard OAEP label binds the share format, workspace ID, recipient user ID, and recipient key version. Membership and the recipient-specific ciphertext are inserted atomically. The recipient retrieves only their share, unlocks their local identity private key, unwraps the same workspace key, and protects it locally with their own workspace password. The backend never receives the raw workspace key, a plaintext identity private key, an identity protection password, or a local workspace password.
+
+Unwrapped keys exist only in browser memory while needed. Local note, pending-change, conflict, and resolved-conflict content uses authenticated encrypted envelopes in IndexedDB. Hiding/backgrounding the document or receiving `pagehide` clears workspace keys, and asynchronous create/unlock completion is rejected if a lock occurred while it was running. Recovery, identity/device transfer, rotation, cryptographic revocation, key-directory verification, sender signatures, and visible-app inactivity timeout remain unimplemented. The API also cannot prove that a client used the named algorithm correctly or supplied genuine ciphertext.
 
 The note list, detail editor, conflict view, and comment discussion decrypt stored envelopes only while the workspace is unlocked. Resulting title/body/comment values remain in React memory while displayed. Locking immediately renders placeholders/empty editor values, clears new-note/comment/merge drafts and decrypted component state, and removes the unwrapped key; saving encrypts before persistence. JavaScript strings cannot be reliably zeroized, so garbage-collected copies may remain transiently in process memory. This does not protect content from same-origin scripts, browser extensions, screenshots, memory inspection, or device compromise while unlocked.
 
@@ -67,6 +71,7 @@ Sensitive assets:
 - Note plaintext.
 - Comment plaintext.
 - Workspace encryption keys.
+- User identity private keys and their protection passwords.
 - Per-note or per-version content encryption keys, if introduced.
 - Passwords and password-derived key material.
 - Session tokens.
@@ -75,6 +80,7 @@ Sensitive assets:
 Metadata assets with limited confidentiality in v1:
 
 - User emails.
+- User public identity keys, algorithms, and versions.
 - Workspace names.
 - Membership graph.
 - Note IDs.
@@ -95,20 +101,18 @@ Implemented primitive model:
 - Authenticate fixed envelope metadata as AES-GCM additional authenticated data.
 - Strictly validate envelope fields, versions, base64 encodings, nonce length, and ciphertext size before decryption.
 
-Implemented local-only bootstrap around those primitives:
+Implemented local protection and sharing around those primitives:
 
 - Create a random workspace key on first unlock setup and map encrypted pending envelopes to sync requests.
 - Protect it locally with an independent 12-to-128-character unlock password using PBKDF2-HMAC-SHA-256 and AES-256-GCM.
 - Store only salt, nonce, KDF parameters, authenticated format metadata, and wrapped-key ciphertext in IndexedDB.
 - Keep the unwrapped key in memory and require unlock again after reload or explicit lock.
+- Generate RSA-OAEP-3072/SHA-256 user identities and store only public identity material on the backend.
+- Encrypt the PKCS8 identity private key locally with PBKDF2-HMAC-SHA-256 and AES-256-GCM.
+- Wrap the existing workspace AES key separately for each recipient with their public key and unwrap it only with their client-only private key.
+- Bind each RSA-OAEP share to workspace and recipient metadata through the OAEP label.
 
-Not yet implemented:
-
-- Give each user or device a key-wrapping public key using reviewed Web Crypto algorithms.
-- Wrap the workspace key separately for each member using that member's wrapping key.
-- Store each member's wrapped workspace key in `workspace_members`.
-- Provision the same workspace key to another authorized browser or member.
-- Recover, rotate, revoke, or migrate protected keys.
+Not yet implemented: identity/private-key transfer between devices, recovery, key rotation, cryptographic revocation, device verification, or protected-key parameter migration.
 
 The package exposes raw workspace-key import and export only as a building block for future wrapping. Raw exported keys provide full decryption capability and must not be stored or transmitted unwrapped.
 
@@ -131,7 +135,7 @@ Session handling:
 
 Key sharing:
 
-- v1 may use a pragmatic workspace-key sharing model.
+- v1 uses recipient-specific RSA-OAEP workspace-key shares.
 - A user who can unwrap the workspace key can decrypt notes in that workspace.
 - Removing a member in v1 does not automatically make previously synced encrypted content unreadable to that member.
 - Strong revocation requires future key rotation and re-encryption.
@@ -142,7 +146,10 @@ Current membership flow:
 
 1. An authenticated user creates a workspace and becomes its first owner.
 2. An owner identifies an existing account by email or user ID and assigns a role.
-3. The backend immediately records membership. There is no pending invitation, email delivery, or key sharing; locally creating a key does not provision it to the added member.
+3. The backend returns that user's current public identity only to an authenticated workspace owner.
+4. The owner's unlocked client wraps the existing workspace key for that identity.
+5. The backend atomically records membership and the opaque key-share ciphertext. There is no pending invitation or email delivery.
+6. The recipient unwraps the share locally and chooses a separate local workspace unlock password.
 
 Roles for v1:
 
@@ -168,6 +175,7 @@ The server will see:
 - Note existence, note IDs, timestamps, deleted status, version numbers, and encrypted payload sizes.
 - Comment existence, IDs, note/workspace associations, authors, parent relationships, timestamps, deleted status, encrypted payload sizes, and discussion activity.
 - Invitation recipients.
+- Public identity keys, algorithms, versions, key-share sender/recipient relationships, ciphertext sizes, creation/revocation timestamps, and share availability.
 - IP-level and timing metadata at the infrastructure layer.
 
 The server should not see:
@@ -175,6 +183,8 @@ The server should not see:
 - Note plaintext.
 - Comment plaintext.
 - Raw workspace keys.
+- Plaintext identity private keys and locally protected private-key envelopes.
+- Local identity and workspace unlock passwords.
 - Passwords.
 
 ## Threats And Mitigations
@@ -186,6 +196,7 @@ Unauthorized workspace access:
 Database compromise:
 
 - Mitigate by storing note and active comment content only as encrypted envelopes.
+- Store only public user identity keys and recipient-specific RSA-OAEP workspace-key ciphertexts for sharing.
 - Soft-deleted comment envelopes are cleared, though metadata and any copies already downloaded remain.
 - The manual sync client uses authenticated encryption, while the backend treats submitted envelope fields as opaque and cannot verify that clients performed authenticated encryption correctly.
 - Residual risk: metadata remains visible.
@@ -232,11 +243,13 @@ Compromised user device:
 Lost password:
 
 - The v1 protected workspace key has no recovery path. Losing the local unlock password or deleting the browser profile can make already-synced ciphertext unrecoverable from this client.
+- The locally protected identity private key also has no recovery or server backup. Losing its protection password/private key prevents decryption of existing workspace-key shares; registering an unrelated replacement key would not recover them.
 - Any password reset flow must not silently grant access to existing encrypted content unless a documented recovery-key design exists.
 
 Member removal:
 
 - v1 cannot revoke content already downloaded by a member.
+- Revoking the backend key-share row and deleting membership prevents normal future retrieval but cannot erase a key, ciphertext, or plaintext already copied to a former member's device.
 - Future key rotation can reduce access to new content only after rotation.
 
 Conflict overwrite:
@@ -256,9 +269,11 @@ Conflict overwrite:
 - v1 does not include formal cryptographic review.
 - The implemented package does not prevent nonce reuse by callers that bypass `encryptNoteContent()` and invoke Web Crypto directly with the same workspace key.
 - Workspace keys are extractable to enable future wrapping. An XSS payload, malicious browser extension, compromised device, or malicious frontend bundle running in the unlocked client context can access plaintext and key material.
-- The protected envelope lives in ordinary IndexedDB rather than hardware-backed storage. Background lifecycle events lock the app, but browsers may delay or skip events during abrupt termination and there is no inactivity timeout while the document remains visible. Member/device key sharing, recovery, key rotation, parameter migration, and cryptographic revocation remain absent.
+- Protected workspace and identity envelopes live in ordinary IndexedDB rather than hardware-backed storage. Background lifecycle events lock the app, but browsers may delay or skip events during abrupt termination and there is no inactivity timeout while the document remains visible. Identity/device transfer, recovery, key rotation, parameter migration, and cryptographic revocation remain absent.
 - The service worker's offline behavior is a static-shell fallback, not protected offline authentication, background sync, or offline comments. A browser that has not completed one successful production load may show only the plaintext-free offline page.
-- The local unlock password is independent of the account password. Creating a separate key in another browser or for another member does not grant access to ciphertext produced with the original key.
+- The workspace unlock password is independent of both the owner's password and the recipient's account password. Creating a replacement workspace key cannot decrypt existing ciphertext, so the UI refuses initialization for existing/shared workspaces without an available share.
+- RSA-OAEP shares provide recipient confidentiality and context binding, not sender authentication. There are no sender signatures, device-to-device verification, key transparency, or fingerprints; a malicious server that substitutes a public key and serves modified client code can defeat the intended sharing flow.
+- The account password protects the local identity envelope, so browser-profile compromise permits offline password guessing. A lost password/private key has no recovery path, and generating a different key cannot decrypt existing shares.
 - Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
 - Comment envelope version 1 distinguishes comments from notes but does not bind ciphertext to a workspace ID, note ID, comment ID, parent ID, or author. A valid comment envelope can be replayed or swapped between comments using the same workspace key.
 - Local note content is encrypted at rest with the workspace key, but note/workspace IDs, timestamps, revisions, statuses, ciphertext sizes, and other operational metadata are not hidden. This is browser-profile encryption, not hardware-backed storage or protection against code running in the unlocked origin.
@@ -270,7 +285,7 @@ Conflict overwrite:
 - The API container is hardened for the local Compose topology, but PostgreSQL and Nginx remain ordinary containers rather than a complete production sandbox. Loopback port binding is a local default, not a network firewall policy for production orchestration.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
 - Comment drafts are not durable offline, and comments have no retry queue, version history, conflict detection, or sync protocol. A failed request requires the user to retry while the in-memory draft remains mounted.
-- The client stores encrypted local and remote snapshots, encrypted pending and resolved payloads, retry errors, cursors, unresolved/resolved conflict metadata, and a password-protected workspace-key envelope in the browser profile. It does not persist note plaintext, the raw workspace key, or the unlock password during normal version 5 operation.
+- The client stores encrypted local and remote snapshots, encrypted pending and resolved payloads, retry errors, cursors, unresolved/resolved conflict metadata, a password-protected workspace-key envelope, and a password-protected identity private-key envelope in the browser profile. It does not persist note plaintext, raw workspace keys, plaintext private identity keys, or passwords during normal version 6 operation.
 - Existing version 1–4 browser databases may contain legacy plaintext until that workspace is successfully unlocked. Version 5 performs a key-dependent lazy migration after unlock, encrypts matching note/queue/conflict records, and clears their plaintext fields. Losing the original key/password before this migration prevents safe automatic conversion; a Dexie schema upgrade alone cannot encrypt because it has no workspace key.
 
 ## Documentation Requirements For Future Changes

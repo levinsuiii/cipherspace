@@ -5,11 +5,16 @@ import type {
   EncryptedComment,
   EncryptedNote,
   EncryptedNoteDetail,
+  EncryptedWorkspaceKeyInput,
+  InviteePublicKey,
   SyncPullResponse,
   SyncPushChange,
   SyncPushResponse,
   User,
+  UserCryptoIdentity,
   Workspace,
+  WorkspaceKeyAccess,
+  WorkspaceKeyShare,
   WorkspaceMember
 } from "./types";
 
@@ -111,6 +116,14 @@ export const api = {
         method: "POST"
       })
   },
+  cryptoIdentity: {
+    get: () => request<{ identity: UserCryptoIdentity }>("/api/crypto/identity"),
+    register: (identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">) =>
+      request<{ identity: UserCryptoIdentity }>("/api/crypto/identity", {
+        body: JSON.stringify(identity),
+        method: "PUT"
+      })
+  },
   comments: {
     create: (workspaceId: string, noteId: string, input: CreateCommentInput) =>
       request<{ comment: EncryptedComment }>(
@@ -128,6 +141,14 @@ export const api = {
       )
   },
   workspaces: {
+    addMember: (
+      workspaceId: string,
+      input: { email: string; keyShare: EncryptedWorkspaceKeyInput; role: WorkspaceMember["role"] }
+    ) =>
+      request<{ member: WorkspaceMember }>(`${workspacePath(workspaceId)}/members`, {
+        body: JSON.stringify(input),
+        method: "POST"
+      }),
     create: (name: string) =>
       request<{ workspace: Workspace }>("/api/workspaces", {
         body: JSON.stringify({ name }),
@@ -135,9 +156,26 @@ export const api = {
       }),
     get: (workspaceId: string) =>
       request<{ workspace: Workspace }>(workspacePath(workspaceId)),
+    getInviteeKey: (workspaceId: string, reference: { email: string } | { userId: string }) => {
+      const query = "email" in reference
+        ? `email=${encodeURIComponent(reference.email)}`
+        : `userId=${encodeURIComponent(reference.userId)}`;
+      return request<{ invitee: InviteePublicKey }>(
+        `${workspacePath(workspaceId)}/invitee-key?${query}`
+      );
+    },
+    getKeyAccess: (workspaceId: string) =>
+      request<{ keyAccess: WorkspaceKeyAccess }>(`${workspacePath(workspaceId)}/key-access`),
+    getOwnKeyShare: (workspaceId: string) =>
+      request<{ keyShare: WorkspaceKeyShare }>(`${workspacePath(workspaceId)}/key-share`),
     list: () => request<{ workspaces: Workspace[] }>("/api/workspaces"),
     listMembers: (workspaceId: string) =>
-      request<{ members: WorkspaceMember[] }>(`${workspacePath(workspaceId)}/members`)
+      request<{ members: WorkspaceMember[] }>(`${workspacePath(workspaceId)}/members`),
+    putKeyShare: (workspaceId: string, userId: string, input: EncryptedWorkspaceKeyInput) =>
+      request<{ keyShare: WorkspaceKeyShare }>(
+        `${workspacePath(workspaceId)}/key-shares/${encodeURIComponent(userId)}`,
+        { body: JSON.stringify(input), method: "PUT" }
+      )
   },
   notes: {
     create: (workspaceId: string, input: CreateNoteInput) =>

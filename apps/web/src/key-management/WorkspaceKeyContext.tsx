@@ -34,6 +34,7 @@ interface WorkspaceKeyContextValue {
   getKey(workspaceId: string): Promise<CryptoKey>;
   inspect(workspaceId: string): Promise<void>;
   lock(workspaceId: string): void;
+  storeShared(workspaceId: string, workspaceKey: CryptoKey, passphrase: string): Promise<void>;
   statusByWorkspace: ReadonlyMap<string, WorkspaceKeyStatus>;
   unlock(workspaceId: string, passphrase: string): Promise<void>;
 }
@@ -152,6 +153,30 @@ export function WorkspaceKeyProvider({
     [repository, setStatus, userId]
   );
 
+  const storeShared = useCallback(
+    async (workspaceId: string, workspaceKey: CryptoKey, passphrase: string) => {
+      const startedAtGeneration = lockGeneration.current;
+      if (await repository.get(workspaceId)) {
+        throw new Error("A protected workspace key already exists. Unlock it instead.");
+      }
+      const protectedKey = await protectWorkspaceKey(workspaceKey, passphrase, {
+        userId,
+        workspaceId
+      });
+      await repository.add(workspaceId, protectedKey);
+      if (
+        lockGeneration.current !== startedAtGeneration ||
+        document.visibilityState === "hidden"
+      ) {
+        setStatus(workspaceId, "locked");
+        throw new Error(backgroundLockMessage);
+      }
+      unlockedKeys.current.set(workspaceId, workspaceKey);
+      setStatus(workspaceId, "unlocked");
+    },
+    [repository, setStatus, userId]
+  );
+
   const lock = useCallback(
     (workspaceId: string) => {
       lockGeneration.current += 1;
@@ -168,8 +193,8 @@ export function WorkspaceKeyProvider({
   }, []);
 
   const value = useMemo<WorkspaceKeyContextValue>(
-    () => ({ create, getKey, inspect, lock, statusByWorkspace, unlock }),
-    [create, getKey, inspect, lock, statusByWorkspace, unlock]
+    () => ({ create, getKey, inspect, lock, statusByWorkspace, storeShared, unlock }),
+    [create, getKey, inspect, lock, statusByWorkspace, storeShared, unlock]
   );
   return <WorkspaceKeyContext.Provider value={value}>{children}</WorkspaceKeyContext.Provider>;
 }
@@ -195,12 +220,18 @@ export function useWorkspaceKey(workspaceId: string) {
     (passphrase: string) => context.unlock(workspaceId, passphrase),
     [context.unlock, workspaceId]
   );
+  const storeShared = useCallback(
+    (workspaceKey: CryptoKey, passphrase: string) =>
+      context.storeShared(workspaceId, workspaceKey, passphrase),
+    [context.storeShared, workspaceId]
+  );
 
   return {
     create,
     getKey,
     lock,
     status: context.statusByWorkspace.get(workspaceId) ?? "checking",
+    storeShared,
     unlock
   };
 }

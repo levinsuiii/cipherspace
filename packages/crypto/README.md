@@ -1,6 +1,6 @@
 # `@cipherspace/crypto`
 
-Browser-compatible client-side cryptography for CipherSpace note and comment content plus local workspace-key protection. The package uses the platform Web Crypto API and has no runtime dependencies.
+Browser-compatible client-side cryptography for CipherSpace note/comment content, local key protection, user identities, and recipient-specific workspace-key sharing. The package uses the platform Web Crypto API and has no runtime dependencies.
 
 ## API
 
@@ -22,7 +22,7 @@ const commentPayload = await encryptCommentContent("review context", workspaceKe
 const comment = await decryptCommentContent(commentPayload, workspaceKey);
 ```
 
-`generateWorkspaceKey()` creates an extractable 256-bit AES-GCM `CryptoKey` with `encrypt` and `decrypt` usages. `exportWorkspaceKey()` and `importWorkspaceKey()` serialize only the raw key material as canonical base64. Exported key material is sensitive and must be wrapped before it is persisted or sent anywhere. This package does not provide that wrapping or sharing flow yet.
+`generateWorkspaceKey()` creates an extractable 256-bit AES-GCM `CryptoKey` with `encrypt` and `decrypt` usages. `exportWorkspaceKey()` and `importWorkspaceKey()` serialize only the raw key material as canonical base64. Exported key material is sensitive and must be wrapped before it is persisted or sent anywhere. `createUserCryptoIdentity()`, `wrapWorkspaceKeyForRecipient()`, and `unwrapWorkspaceKeyShare()` implement the v1 RSA-OAEP-3072/SHA-256 sharing flow.
 
 ## Content envelopes
 
@@ -57,8 +57,8 @@ npm run build --workspace @cipherspace/crypto
 ## Current limits
 
 - Unwrapped workspace keys remain in caller-managed memory. The package can protect a raw workspace key with PBKDF2-HMAC-SHA-256 and AES-256-GCM, but persistence remains the caller's responsibility.
-- Raw key export exists only to support future wrapping. Never store or transmit its result unwrapped.
-- Member key sharing, key wrapping, recovery, rotation, revocation, and cryptographic deletion are not implemented.
-- The local unlock passphrase is separate from the account password. Recovery, member/device provisioning, and KDF parameter migration are not implemented.
+- Raw key export supports tested wrapping integration. Never store or transmit its result unwrapped.
+- Recipient-specific member key wrapping is implemented. Recovery, identity/device transfer, rotation, revocation, sender signatures, key transparency, and cryptographic deletion are not.
+- The workspace unlock passphrase is separate from the account password. The account password protects the local identity private-key envelope; recovery and KDF parameter migration are not implemented.
 - Version 1 additional authenticated data binds the content class, envelope format, algorithm, and key version, but not a workspace ID, note ID, comment ID, author, parent, or server version. A later integration must design contextual binding if it needs to reject replay or ciphertext swapping within the same content class and workspace key.
 - The package contains no storage, transport, authorization, sync, or UI behavior.

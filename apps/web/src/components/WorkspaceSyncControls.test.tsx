@@ -8,10 +8,12 @@ afterEach(cleanup);
 function props() {
   return {
     conflictCount: 0,
+    keyAccess: { canInitialize: true, keyShareAvailable: false },
     keyStatus: "unlocked" as const,
     onCreateKey: vi.fn(async () => undefined),
     onLock: vi.fn(),
     onSync: vi.fn(async () => ({ conflicts: 0, pulled: 0, pushed: 2 })),
+    onSetupShared: vi.fn(async () => undefined),
     onUnlock: vi.fn(async () => undefined),
     pendingCount: 2
   };
@@ -46,6 +48,31 @@ describe("WorkspaceSyncControls", () => {
     await waitFor(() =>
       expect(controls.onCreateKey).toHaveBeenCalledWith("correct horse battery")
     );
+  });
+
+  it("sets up a recipient key share with separate identity and workspace passwords", async () => {
+    const controls = {
+      ...props(),
+      keyAccess: { canInitialize: false, keyShareAvailable: true },
+      keyStatus: "missing" as const
+    };
+    render(<WorkspaceSyncControls {...controls} />);
+
+    fireEvent.change(screen.getByLabelText("Account password"), {
+      target: { value: "recipient account password" }
+    });
+    const workspacePasswords = screen.getAllByLabelText(/unlock password/i);
+    fireEvent.change(workspacePasswords[0]!, { target: { value: "recipient workspace password" } });
+    fireEvent.change(workspacePasswords[1]!, { target: { value: "recipient workspace password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Set up encrypted workspace access" }));
+
+    await waitFor(() =>
+      expect(controls.onSetupShared).toHaveBeenCalledWith(
+        "recipient account password",
+        "recipient workspace password"
+      )
+    );
+    expect(controls.onCreateKey).not.toHaveBeenCalled();
   });
 
   it("labels fetch failures as server unavailable without mislabeling API errors", async () => {
