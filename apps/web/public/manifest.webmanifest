@@ -1,0 +1,32 @@
+{
+  "id": "/",
+  "name": "CipherSpace Encrypted Workspace",
+  "short_name": "CipherSpace",
+  "description": "A local-first encrypted collaboration workspace for notes and discussions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#09110f",
+  "theme_color": "#0b1512",
+  "categories": ["productivity", "security"],
+  "icons": [
+    {
+      "src": "/icons/cipherspace-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/cipherspace-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/cipherspace-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

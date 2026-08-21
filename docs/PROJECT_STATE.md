@@ -1,15 +1,20 @@
 # Project State
 
-CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Multi-user key sharing, recovery, rotation, automatic merging, and offline comment sync remain separate future work.
+CipherSpace now has a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Multi-user key sharing, recovery, rotation, automatic merging, and offline comment sync remain separate future work.
 
 ## Current Status
 
 - `apps/api` contains a TypeScript/Node.js Fastify service.
 - `apps/web` contains a React and TypeScript Vite application using React Router and TanStack Query.
-- The frontend includes login and registration pages, HTTP-only cookie session bootstrap/logout, protected routing, a responsive authenticated layout, and basic navigation.
+- The frontend includes login and registration pages, HTTP-only cookie session bootstrap/logout, protected routing, a responsive authenticated layout, and touch-friendly navigation.
+- Layouts are usable around 360px width: workspace/note rows remain readable, note creation moves ahead of long lists, editor actions stack, inputs avoid iOS focus zoom, nested comments limit indentation, conflict snapshots remain scrollable, and primary controls use at least 44px touch targets.
+- The frontend ships a valid web app manifest with CipherSpace names, theme/background colors, standalone display mode, 192px/512px PNG icons, a maskable icon, an Apple touch icon, and safe-area viewport metadata.
+- Production builds register a static-only service worker with an app-shell/offline fallback. It caches generated frontend assets, icons, the manifest, and a plaintext-free offline page while explicitly bypassing `/api/*`, `/health`, non-GET, and cross-origin requests.
+- A reproducible icon generator and `npm run check:pwa` validate required built manifest fields, icon dimensions/purpose, iOS metadata, service-worker safety exclusions, and offline assets.
 - Authenticated users can list and create workspaces, open workspace details, and view the backend-supported member directory with role labels.
 - Workspace note pages list the durable local cache, show explicit loading/error/empty/offline states, and expose cached encrypted server-version metadata separately from the local editor payload.
 - Local and server-backed note envelopes are decrypted only after workspace unlock and displayed from memory. Locking immediately replaces list/detail titles with an encrypted placeholder, clears rendered editor values plus new-note/comment/conflict-merge drafts, and disables editing; wrong-key states expose no partial plaintext.
+- Explicit lock, document hiding, and `pagehide` remove all unwrapped workspace keys from memory. A generation check prevents a slow create/unlock operation from restoring a key after the app was backgrounded.
 - Selecting **Save local change** encrypts the current title/body with a fresh nonce before atomically storing the local note and pending update. New note, queue, conflict, and resolved-conflict records persist ciphertext rather than plaintext.
 - Owners and editors can create and edit local notes; owners can add local tombstones. Viewers remain read-only. These local actions do not call the direct encrypted-note API.
 - The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
@@ -116,7 +121,7 @@ Deferred until after the current collaboration slice:
 - Hardware-backed keys.
 - SSO, SCIM, audit-log exports, legal hold, or compliance features.
 - Public note sharing links.
-- Mobile apps.
+- Native Android/iOS apps. The web frontend is installable as a PWA.
 - Background push sync.
 - Attachment storage.
 - Search over encrypted note bodies on the server.
@@ -153,12 +158,14 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 13. Add comments after note sync is stable, using encrypted content and lightweight parent-linked replies. Complete for online comments; offline comment sync and versioning remain deferred.
 14. Add end-to-end tests for authentication, offline edit durability, sync, conflicts, and access control.
 15. Add Docker Compose only after the backend and database shape are real. Complete for the backend foundation.
+16. Add mobile-responsive layouts and a safely scoped installable PWA shell. Complete for 360px layouts, icons/manifest, static-only offline fallback, background locking, install documentation, and static installability checks.
 
 ## Known Limitations
 
 - Initial authentication still requires the API. After a user has been verified once, the cached profile can reopen that user's local workspace/note data during an outage; this does not establish server authorization.
 - Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
-- Workspace lock removes the unwrapped key from memory and hides readable note UI state. There is no automatic timeout, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
+- Workspace lock removes the unwrapped key from memory and hides readable note UI state. Backgrounding or hiding the app locks immediately, but there is no inactivity timeout while the app stays visible, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
+- PWA installation requires a secure context in deployment. Provider/browser install UI and cross-site-cookie behavior vary, and the service worker offers static-shell navigation fallback rather than background sync or offline comments.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, breached-password check, MFA, multi-session listing/revocation, or automatic expired-session cleanup. Rate limiting is per-process memory rather than a shared distributed store.
 - The free public-beta topology uses cross-site provider domains and therefore `SameSite=None`. Browser third-party-cookie controls may still block sessions, and the relaxed cookie policy leaves logout CSRF as a documented residual risk; exact credentialed CORS and JSON/preflight boundaries must not be loosened.

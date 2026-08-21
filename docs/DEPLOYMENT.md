@@ -8,7 +8,7 @@ This guide deploys CipherSpace at no cost with three replaceable services:
 
 The providers supply HTTPS and generated subdomains, so v1 does not need a custom domain. The guide reflects provider documentation checked on 2026-08-21. Free plans change; review the linked provider pages before each deployment.
 
-This is a friends-and-family beta topology, not a production SLA. It does not add billing, recovery, key rotation, mobile work, or multi-user key sharing.
+This is a friends-and-family beta topology, not a production SLA. It includes the responsive installable web app, but does not add billing, native mobile apps, recovery, key rotation, or multi-user key sharing.
 
 ## Production topology
 
@@ -62,8 +62,12 @@ From the repository root:
 npm install
 npm test
 npm run build:production
+npm run check:pwa
 docker compose config
 ```
+
+`check:pwa` runs against the built frontend and verifies the manifest, required icon sizes,
+maskable icon, iOS metadata, service-worker API exclusions, and offline fallback assets.
 
 For a full local check, copy `.env.example` to `.env`, replace the development `SESSION_SECRET`, and run `docker compose up --build`. Confirm `http://localhost:8080/health` returns `200`.
 
@@ -90,6 +94,10 @@ Creating the static project first gives you the exact origin needed by CORS.
 7. Deploy and record the exact production URL, such as `https://cipherspace.pages.dev`.
 
 Cloudflare Pages recognizes the build as a single-page application because it has no top-level `404.html`, so client-side routes fall back to `index.html`. Vite copies `apps/web/public/_headers` into the build to apply the static security headers. The initial site cannot authenticate until the API URL is added in step 5.
+
+The same build also copies the PWA manifest, icons, service worker, and offline page. The service
+worker is served at the origin root so it can control application routes; `_headers` marks it
+`Cache-Control: no-cache` so deployments can be discovered promptly. It never caches API responses.
 
 See the official [Cloudflare Pages Git integration](https://developers.cloudflare.com/pages/get-started/git-integration/), [SPA behavior](https://developers.cloudflare.com/pages/configuration/serving-pages/#single-page-application-spa-rendering), and [custom headers](https://developers.cloudflare.com/pages/configuration/headers/) documentation.
 
@@ -179,6 +187,9 @@ Use a clean browser profile and complete this flow over the deployed HTTPS URLs:
 9. Lock the workspace while note/comment/merge drafts are visible. Confirm note titles become **Encrypted note**, plaintext fields clear, editing is disabled, and unlock restores persisted content.
 10. Inspect Render logs and Neon rows for the manual plaintext marker described in `README.md`; note/comment plaintext, unlock passwords, raw keys, and session tokens must not appear.
 11. Test the exact desktop/mobile browsers friends will use, especially their cross-site-cookie behavior and the first request after API/database idle time.
+12. At roughly 360px width, complete note editing, comments, locking, and conflict resolution without horizontal page overflow or unreachable controls.
+13. In developer tools, confirm the manifest and 192px/512px/maskable icons load, the service worker controls the page after reload, and Cache Storage contains no `/api/` entries.
+14. Install from Chrome on Android and from Safari's **Share → Add to Home Screen** on iOS. Launch from the icon, background the app, and confirm it returns locked.
 
 ## Free-tier limitations
 

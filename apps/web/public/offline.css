@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  place-items: center;
+  color: #dce7e3;
+  background: #09110f;
+}
+
+main {
+  width: min(32rem, calc(100% - 2rem));
+  padding: 1.5rem;
+  border: 1px solid #263b35;
+  border-radius: 0.75rem;
+  background: #111c19;
+}
+
+p {
+  color: #a8bbb5;
+  line-height: 1.6;
+}
+
+a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  padding: 0.65rem 1rem;
+  border-radius: 0.45rem;
+  color: #07110e;
+  background: #76f3c4;
+  font-weight: 700;
+  text-decoration: none;
+}

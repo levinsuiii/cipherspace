@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
+    "check:pwa": "node scripts/check-pwa.mjs",
     "dev": "vite",
+    "generate:pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "prebuild": "npm run build --workspace @cipherspace/crypto",
     "pretest": "npm run build --workspace @cipherspace/crypto",
     "pretypecheck": "npm run build --workspace @cipherspace/crypto",

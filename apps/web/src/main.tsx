@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { AuthProvider } from "./auth/AuthContext";
+import { registerServiceWorker } from "./pwa";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -32,3 +33,5 @@ createRoot(root).render(
     </QueryClientProvider>
   </StrictMode>
 );
+
+registerServiceWorker();

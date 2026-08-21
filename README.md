@@ -81,6 +81,96 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
+## Mobile and Progressive Web App
+
+The frontend is responsive down to a 360px-wide viewport. Workspace and note lists use full-width
+touch rows, important controls have at least 44px touch targets, note and conflict editors keep a
+usable mobile-height writing area, and note metadata, comments, replies, and conflict snapshots wrap
+or scroll without pushing actions off screen. On small screens, the new-note panel appears before a
+long note list so note creation remains reachable.
+
+CipherSpace includes a web app manifest named **CipherSpace Encrypted Workspace**, 192px and 512px
+PNG icons, a maskable icon, an Apple touch icon, theme/background colors, standalone display mode,
+and safe-area viewport support. The production build registers `/service-worker.js`; Vite development
+mode deliberately does not register it, which avoids a stale worker intercepting source-module
+requests while developing.
+
+The service worker caches only the static app shell, generated `/assets/` bundles, icons, manifest,
+and a content-free offline page. It ignores non-GET requests, cross-origin requests, `/api/*`, and
+`/health`. It therefore does not cache note/comment responses, session responses, sync payloads, or
+decrypted plaintext. Encrypted local notes continue to use the existing IndexedDB repository rather
+than the Cache API. After one successful online production load, an offline navigation can reopen the
+cached app shell and the last verified local user scope; online authentication and comments still
+require the API.
+
+Whenever the document becomes hidden or receives `pagehide`—including when a mobile user switches
+apps or sends the installed PWA to the background—CipherSpace immediately removes all unwrapped
+workspace keys from memory. The existing locked rendering then clears note titles/editor values,
+comment drafts/content, and conflict/merge plaintext. Returning to the app requires the local unlock
+password again. This is a background lock, not an inactivity timer: an unlocked app that remains
+visible does not automatically lock.
+
+Build and statically validate the installability assets with:
+
+```powershell
+npm run build:web
+npm run check:pwa
+```
+
+Then run `npm run preview --workspace @cipherspace/web` and inspect `http://localhost:4173` in a
+360px-wide responsive viewport. The Vite preview proxy still expects the API at
+`http://localhost:3000`. The Docker production build can instead be checked at
+`http://localhost:8080`. Browsers treat local `localhost` as a secure context for development, but a
+phone opening a LAN IP is not the same localhost; use the deployed HTTPS URL for real-device
+installation. In browser developer tools, verify the manifest has no errors, the 192px/512px and
+maskable icons load, the service worker controls the page after a reload, and no `/api/` response is
+present in Cache Storage.
+
+### Install on Android
+
+1. Open the deployed CipherSpace HTTPS URL in Chrome on Android and complete one normal page load.
+2. Open Chrome's menu and choose **Install app** or **Add to Home screen**. Browser wording varies.
+3. Confirm the name **CipherSpace** and select **Install**.
+4. Launch CipherSpace from the new home-screen icon, sign in, and unlock the workspace locally.
+5. Switch to another app and return. Confirm the workspace is locked and requires the local unlock
+   password again.
+
+If Chrome does not offer installation, confirm the page is HTTPS, reload once, check that the
+manifest and service worker are error-free, and verify that the selected browser permits the
+cross-site session cookie required by the documented free-provider deployment.
+
+### Install on iPhone or iPad
+
+1. Open the deployed CipherSpace HTTPS URL in Safari.
+2. Tap **Share**, then **Add to Home Screen**. If it is not visible, scroll or choose **Edit Actions**.
+3. Keep or edit the displayed name, then tap **Add**.
+4. Launch CipherSpace from the home-screen icon, sign in, and unlock the workspace locally.
+5. Background the installed app and return. Confirm the workspace is locked and unlock it again.
+
+iOS installation uses Safari's share sheet and may not show a proactive install prompt. Private
+browsing, browser storage clearing, or deleting site data can remove the protected workspace-key
+envelope and encrypted local cache; there is no recovery or device provisioning in v1.
+
+### Manual mobile/PWA test flow
+
+1. Start the app locally, or use the deployed HTTPS URL after deployment.
+2. Open it at about 360px width or on a phone and verify there is no horizontal page overflow.
+3. Register or sign in.
+4. Open a workspace.
+5. Create or unlock its local workspace key.
+6. Create a note, open it, and edit its title/body using the mobile keyboard.
+7. Add a comment and a reply; confirm nested discussion remains readable and actions remain reachable.
+8. Select **Sync** and confirm the pending count returns to zero.
+9. Select **Lock**.
+10. Verify note titles become **Encrypted note** and note/comment plaintext and drafts disappear.
+11. Reload the page and confirm it remains locked.
+12. Unlock again and confirm the encrypted note/comment is readable.
+13. Use the conflict simulation later in this README and open conflict resolution at mobile width.
+14. Test **Keep local**, **Accept remote**, and a manual merge; confirm snapshots, metadata, editors,
+    and resolution buttons remain usable without horizontal page overflow.
+15. After deployment, add CipherSpace to an Android/iOS home screen and repeat the core flow,
+    including backgrounding the app and unlocking again.
+
 ## Free public-beta deployment
 
 The documented no-cost path uses a Neon Free Postgres database, a Render Free API web service, and a Cloudflare Pages static frontend. Provider HTTPS and generated provider subdomains are sufficient; a custom domain is not required. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact setup, environment variables, migration behavior, health checks, browser verification, and current free-tier limitations.
@@ -123,6 +213,8 @@ CipherSpace applies the following practical hardening controls:
 - Workspace, membership, note, version, comment, sync-push, and sync-pull operations enforce current membership. Viewers are read-only; owners and editors may create/update notes and comments; only owners delete notes or manage members; comment deletion follows the documented author/moderator rule.
 - Note and comment API inputs must use the implemented version 1 AES-GCM envelope shape, including a 12-byte nonce, at least a 16-byte authenticated ciphertext/tag, canonical base64, and bounded fields. The server still cannot prove that submitted opaque bytes encrypt meaningful content.
 - Locking removes the workspace key and clears note titles, editor values, comment drafts/content, and conflict/merge plaintext from rendered React state. Plaintext can still exist transiently in browser/runtime memory while unlocked and cannot be reliably zeroized as JavaScript strings.
+- Moving the page or installed PWA to the background triggers the same lock immediately. There is no visible-app inactivity timeout, and browsers may delay or terminate background lifecycle events; users should still select **Lock** before handing an unlocked device to someone else.
+- The service worker caches only static application files and a plaintext-free offline page. API/auth/sync/comment responses bypass it, and IndexedDB remains the encrypted local-note store. A compromised service worker or malicious delivered frontend would still run inside the trusted application origin and is outside v1's protection boundary.
 - New local note, queue, conflict, and resolution records store encrypted envelopes and `null` legacy plaintext fields. A key-dependent compatibility migration encrypts legacy schema v1-v4 plaintext after the correct workspace is unlocked.
 - Docker Compose binds PostgreSQL, API, and web ports to loopback by default. The API container runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` filesystem. Development database credentials and the marked development session secret are not suitable for production.
 
@@ -400,5 +492,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The frontend foundation, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The responsive frontend, installable PWA shell, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local-only workspace-key unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Member/device key sharing, recovery, rotation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

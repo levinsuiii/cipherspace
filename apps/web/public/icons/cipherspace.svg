@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CipherSpace">
+  <rect width="512" height="512" rx="104" fill="#09110f"/>
+  <rect x="64" y="64" width="384" height="384" rx="84" fill="#10231d" stroke="#76f3c4" stroke-width="18"/>
+  <path d="M343 174c-24-27-55-40-92-40-69 0-121 52-121 122s52 122 121 122c37 0 68-13 92-40l-36-37c-14 15-32 23-55 23-38 0-66-29-66-68s28-68 66-68c23 0 41 8 55 23z" fill="#76f3c4"/>
+</svg>

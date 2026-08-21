@@ -26,6 +26,9 @@ export class WorkspaceLockedError extends Error {
   }
 }
 
+const backgroundLockMessage =
+  "CipherSpace locked because the app moved to the background. Return to the app and unlock again.";
+
 interface WorkspaceKeyContextValue {
   create(workspaceId: string, passphrase: string): Promise<void>;
   getKey(workspaceId: string): Promise<CryptoKey>;
@@ -46,6 +49,7 @@ export function WorkspaceKeyProvider({
     [userId]
   );
   const unlockedKeys = useRef(new Map<string, CryptoKey>());
+  const lockGeneration = useRef(0);
   const [statusByWorkspace, setStatusByWorkspace] = useState<
     ReadonlyMap<string, WorkspaceKeyStatus>
   >(new Map());
@@ -63,6 +67,31 @@ export function WorkspaceKeyProvider({
     });
   }, []);
 
+  const lockAll = useCallback(() => {
+    lockGeneration.current += 1;
+    const workspaceIds = [...unlockedKeys.current.keys()];
+    unlockedKeys.current.clear();
+    if (workspaceIds.length === 0) return;
+
+    setStatusByWorkspace((current) => {
+      const next = new Map(current);
+      for (const workspaceId of workspaceIds) next.set(workspaceId, "locked");
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") lockAll();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", lockAll);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", lockAll);
+    };
+  }, [lockAll]);
+
   const inspect = useCallback(
     async (workspaceId: string) => {
       if (unlockedKeys.current.has(workspaceId)) {
@@ -78,6 +107,7 @@ export function WorkspaceKeyProvider({
 
   const create = useCallback(
     async (workspaceId: string, passphrase: string) => {
+      const startedAtGeneration = lockGeneration.current;
       if (await repository.get(workspaceId)) {
         throw new Error("A protected workspace key already exists. Unlock it instead.");
       }
@@ -87,6 +117,13 @@ export function WorkspaceKeyProvider({
         workspaceId
       });
       await repository.add(workspaceId, protectedKey);
+      if (
+        lockGeneration.current !== startedAtGeneration ||
+        document.visibilityState === "hidden"
+      ) {
+        setStatus(workspaceId, "locked");
+        throw new Error(backgroundLockMessage);
+      }
       unlockedKeys.current.set(workspaceId, workspaceKey);
       setStatus(workspaceId, "unlocked");
     },
@@ -95,12 +132,20 @@ export function WorkspaceKeyProvider({
 
   const unlock = useCallback(
     async (workspaceId: string, passphrase: string) => {
+      const startedAtGeneration = lockGeneration.current;
       const stored = await repository.get(workspaceId);
       if (!stored) throw new Error("No protected workspace key exists on this device.");
       const workspaceKey = await unlockWorkspaceKey(stored.protected_key, passphrase, {
         userId,
         workspaceId
       });
+      if (
+        lockGeneration.current !== startedAtGeneration ||
+        document.visibilityState === "hidden"
+      ) {
+        setStatus(workspaceId, "locked");
+        throw new Error(backgroundLockMessage);
+      }
       unlockedKeys.current.set(workspaceId, workspaceKey);
       setStatus(workspaceId, "unlocked");
     },
@@ -109,6 +154,7 @@ export function WorkspaceKeyProvider({
 
   const lock = useCallback(
     (workspaceId: string) => {
+      lockGeneration.current += 1;
       unlockedKeys.current.delete(workspaceId);
       setStatus(workspaceId, "locked");
     },

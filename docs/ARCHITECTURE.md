@@ -136,6 +136,18 @@ Initial pages:
 
 The note detail page now includes an encrypted discussion section. Comments are online API state managed through TanStack Query rather than IndexedDB or the note sync queue.
 
+The same React application is the mobile surface; there is no native wrapper. Responsive CSS keeps
+workspace lists, note lists, editors, comments, and conflict resolution usable around 360px width,
+including safe-area padding and touch targets. A web app manifest, generated PNG icons, Apple touch
+metadata, and standalone display mode make the deployed HTTPS frontend installable as a PWA.
+
+The production-only service worker is intentionally outside application data flow. It caches the
+static app shell, hashed frontend assets, icons, manifest, and a plaintext-free offline page. It does
+not intercept non-GET, cross-origin, `/api/*`, or `/health` requests. IndexedDB remains the only
+durable local note store, and its encrypted-at-rest rules are unchanged. When lifecycle visibility
+changes hide or unload the app, the key provider clears every unwrapped in-memory workspace key;
+components respond to locked status by removing rendered plaintext.
+
 ## Implemented Frontend Foundation
 
 `apps/web` is a React and TypeScript Vite application. React Router owns public authentication routes and protected workspace/note routes. TanStack Query owns remote API state and cache invalidation, while a separate Dexie repository owns durable client data and pending note mutations. A small typed fetch client sends credentials with every request so the backend's HTTP-only cookie session remains the online authentication boundary.
@@ -252,3 +264,6 @@ Sensitive local storage rules:
 - Commit each pulled page and its new cursor atomically; represent divergent base versions as unresolved local conflicts without overwriting drafts.
 - Resolve note-edit conflicts locally and explicitly. Preserve both snapshots, rebase exactly one chosen result to the latest cached remote version, and let normal encrypted sync create the immutable server version.
 - Decrypt local or server-backed note envelopes only while the workspace key is unlocked. Keep plaintext in UI memory, render placeholders immediately on lock, and encrypt every saved change before persistence.
+- Use one responsive web application for desktop/mobile and install it through standards-based PWA metadata rather than a native wrapper.
+- Restrict service-worker caching to public static application resources. Keep API/auth/sync/comment responses and encrypted workspace data out of Cache Storage, and do not implement background sync.
+- Lock every in-memory workspace key when the document becomes hidden or receives `pagehide`; guard asynchronous unlock completion so a backgrounded app cannot become unlocked afterward.
