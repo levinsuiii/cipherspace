@@ -8,16 +8,21 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "build:api": "npm run build --workspace @cipherspace/api",
+    "build:production": "npm run typecheck && npm run build",
+    "build:web": "npm run build --workspace @cipherspace/web",
+    "db:migrate": "npm run db:migrate --workspace @cipherspace/api",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace @cipherspace/api",
     "dev": "npm run dev --workspace @cipherspace/api",
     "dev:api": "npm run dev --workspace @cipherspace/api",
     "dev:web": "npm run dev --workspace @cipherspace/web",
     "start": "npm run start --workspace @cipherspace/api",
+    "start:deploy": "npm run start:deploy --workspace @cipherspace/api",
     "test": "npm run test --workspaces --if-present",
     "test:api": "npm run test --workspace @cipherspace/api",
     "test:web": "npm run test --workspace @cipherspace/web",
     "test:watch": "npm run test:watch --workspace @cipherspace/api",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "db:migrate": "npm run db:migrate --workspace @cipherspace/api"
+    "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -53,4 +53,34 @@ describe("environment configuration", () => {
       })
     ).toThrow(/AUTH_RATE_LIMIT_MAX|DATABASE_URL/);
   });
+
+  it("supports hosted Postgres migration URLs and cross-site production cookies", () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      CORS_ORIGINS: "https://cipherspace.pages.dev",
+      DATABASE_POOL_MAX: "5",
+      DATABASE_URL:
+        "postgresql://user:password@project-pooler.example.com/cipherspace?sslmode=require",
+      MIGRATIONS_DATABASE_URL:
+        "postgresql://user:password@project.example.com/cipherspace?sslmode=require",
+      SESSION_COOKIE_SAME_SITE: "none",
+      TRUST_PROXY: "true"
+    });
+
+    expect(config.DATABASE_POOL_MAX).toBe(5);
+    expect(config.MIGRATIONS_DATABASE_URL).toContain("sslmode=require");
+    expect(config.SESSION_COOKIE_SAME_SITE).toBe("none");
+    expect(config.TRUST_PROXY).toBe(true);
+  });
+
+  it("rejects cross-site cookies outside secure production mode", () => {
+    expect(() =>
+      loadConfig({
+        DATABASE_URL: validEnvironment.DATABASE_URL,
+        NODE_ENV: "development",
+        SESSION_COOKIE_SAME_SITE: "none",
+        SESSION_SECRET: validEnvironment.SESSION_SECRET
+      })
+    ).toThrow(/requires NODE_ENV=production/);
+  });
 });

@@ -31,7 +31,32 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
+export function normalizeApiBaseUrl(value: string | undefined): string {
+  if (!value?.trim()) {
+    return "";
+  }
+
+  const normalized = value.trim().replace(/\/+$/, "");
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("VITE_API_BASE_URL must be an absolute HTTP(S) origin");
+  }
+
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.origin !== normalized ||
+    parsed.username !== "" ||
+    parsed.password !== ""
+  ) {
+    throw new Error("VITE_API_BASE_URL must be an absolute HTTP(S) origin without a path");
+  }
+
+  return normalized;
+}
+
+const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);

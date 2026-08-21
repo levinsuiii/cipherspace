@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, and manual note-edit conflict resolution. Multi-user key sharing, recovery, rotation, automatic merging, and offline comment sync remain separate future work.
+CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persistence, authentication, workspace membership, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, a minimal local-only workspace-key unlock, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Multi-user key sharing, recovery, rotation, automatic merging, and offline comment sync remain separate future work.
 
 ## Current Status
 
@@ -28,6 +28,11 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
 - Local storage tests use `fake-indexeddb` and cover encrypted creation/editing, absence of plaintext in note and queue records, legacy plaintext migration after unlock, database reopen/reload durability, tombstone deletion, protected-key persistence, and unlock after database reopen.
 - `GET /health` checks PostgreSQL connectivity and returns `200` when the database is reachable or `503` when it is unavailable.
+- Production deployment configuration supports a pooled hosted-Postgres `DATABASE_URL`, an optional direct `MIGRATIONS_DATABASE_URL`, and a bounded `DATABASE_POOL_MAX`.
+- Compiled deployment scripts run checksum-verified migrations before API startup. The API Docker image uses the same `start:deploy` path.
+- `render.yaml` describes a free Docker API service with generated session secret, explicit hosted-database/CORS inputs, trusted proxy handling, and `/health` readiness checks.
+- The frontend accepts a validated, public build-time `VITE_API_BASE_URL`; an empty value retains the existing local Vite/Nginx same-origin proxy behavior.
+- Static builds include provider-readable security headers, and `docs/DEPLOYMENT.md` documents the Neon + Render + Cloudflare Pages beta path, migrations, health checks, functional verification, and free-tier constraints.
 - PostgreSQL access uses a small `pg` connection-pool adapter.
 - An ordered SQL migration runner records migration filenames and checksums in `schema_migrations`.
 - The initial migration prepares `users`, `workspaces`, `workspace_members`, `encrypted_notes`, `note_versions`, and `sync_changes`, with foreign keys, constraints, and lookup indexes.
@@ -37,7 +42,7 @@ CipherSpace now has a runnable React frontend, Fastify backend, PostgreSQL persi
 - Docker Compose binds web, API, and PostgreSQL ports to loopback by default. The API runtime runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` mount. The Nginx frontend sends a restrictive browser-header policy.
 - Users can register and log in with a normalized email and a 12-to-128-character password through `/api/auth/register` and `/api/auth/login`.
 - Passwords are stored as Argon2id hashes with explicit 19 MiB memory, two-iteration, one-lane, 32-byte-hash parameters. Plaintext passwords are neither persisted nor returned.
-- Registration and login create database-backed opaque sessions in host-only, HTTP-only, high-priority, `SameSite=Strict` cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`.
+- Registration and login create database-backed opaque sessions in host-only, HTTP-only, high-priority cookies. Only HMAC-SHA-256 token digests are stored; production cookies are also marked `Secure`. Same-site policy defaults to `strict` and can be explicitly set to `none` for the documented separate HTTPS frontend/API deployment.
 - Registration and login share a configurable IP-based rate limit (10 attempts per 60 seconds by default). The current limiter is in-memory and per API process.
 - Credentialed CORS accepts only exact configured origins, rejects wildcards/path origins/embedded credentials, and requires an explicit production policy. Same-origin-only deployments may configure an empty origin list.
 - Helmet applies restrictive API security headers and production HSTS. API responses are non-cacheable, auth request bodies are capped at 4 KiB, the global body limit is configurable, and malformed/oversized/unexpected failures use safe response bodies.
@@ -156,7 +161,8 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Workspace lock removes the unwrapped key from memory and hides readable note UI state. There is no automatic timeout, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, breached-password check, MFA, multi-session listing/revocation, or automatic expired-session cleanup. Rate limiting is per-process memory rather than a shared distributed store.
-- Cookie sessions use `SameSite=Strict`, exact-origin CORS, and JSON mutation bodies. There is no explicit CSRF token; add one before introducing cross-site-compatible session flows or relaxing these controls.
+- The free public-beta topology uses cross-site provider domains and therefore `SameSite=None`. Browser third-party-cookie controls may still block sessions, and the relaxed cookie policy leaves logout CSRF as a documented residual risk; exact credentialed CORS and JSON/preflight boundaries must not be loosened.
+- Free hosting has cold starts, storage/compute/build limits, ephemeral API filesystems, and no SLA. Provider quotas and policies can change after this documentation is published.
 - Authorization is implemented for workspace, membership, note, note-version, comment, and sync endpoints. Non-members receive workspace-not-found responses.
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.

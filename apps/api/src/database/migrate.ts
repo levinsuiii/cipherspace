@@ -110,7 +110,9 @@ export async function runMigrations(
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const completed = await runMigrations(config.DATABASE_URL);
+  const completed = await runMigrations(
+    config.MIGRATIONS_DATABASE_URL ?? config.DATABASE_URL
+  );
 
   if (completed.length === 0) {
     process.stdout.write("Database is already up to date.\n");

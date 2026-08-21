@@ -17,13 +17,16 @@ const testConfig: AppConfig = {
   AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
+  DATABASE_POOL_MAX: 10,
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
   REQUEST_BODY_LIMIT_BYTES: 1_500_000,
+  SESSION_COOKIE_SAME_SITE: "strict",
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
-  SESSION_TTL_HOURS: 168
+  SESSION_TTL_HOURS: 168,
+  TRUST_PROXY: false
 };
 
 class InMemoryAuthRepository implements AuthRepository {
@@ -182,6 +185,18 @@ describe("authentication routes", () => {
     expect(wrongPassword.json()).toEqual({
       error: { code: "invalid_credentials", message: "Invalid email or password." }
     });
+  });
+
+  it("can issue secure cross-site cookies for a separate production frontend", async () => {
+    const app = createApp({ NODE_ENV: "production", SESSION_COOKIE_SAME_SITE: "none" });
+    const registration = await app.inject({
+      method: "POST",
+      payload: { email: "person@example.com", password: "correct horse battery staple" },
+      url: "/api/auth/register"
+    });
+
+    expect(registration.headers["set-cookie"]).toContain("SameSite=None");
+    expect(registration.headers["set-cookie"]).toContain("Secure");
   });
 
   it("rejects duplicate accounts without exposing the existing account", async () => {

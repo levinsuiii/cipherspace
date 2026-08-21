@@ -21,24 +21,26 @@ interface AuthRouteOptions {
   authService: AuthService;
   rateLimitMax: number;
   rateLimitWindowMs: number;
+  sameSite: "strict" | "lax" | "none";
   secureCookies: boolean;
 }
 
 const cookieBaseOptions = {
   httpOnly: true,
   path: "/",
-  priority: "high" as const,
-  sameSite: "strict" as const
+  priority: "high" as const
 };
 
 function setSessionCookie(
   reply: FastifyReply,
   session: AuthenticatedSession,
+  sameSite: AuthRouteOptions["sameSite"],
   secureCookies: boolean
 ): void {
   reply.setCookie(sessionCookieName, session.token, {
     ...cookieBaseOptions,
     expires: session.expiresAt,
+    sameSite,
     secure: secureCookies
   });
 }
@@ -53,7 +55,7 @@ function validationFailure(reply: FastifyReply) {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
-  const { authService, rateLimitMax, rateLimitWindowMs, secureCookies } = options;
+  const { authService, rateLimitMax, rateLimitWindowMs, sameSite, secureCookies } = options;
   const requireAuthentication = createRequireAuthentication(authService);
   const authRateLimit = {
     max: rateLimitMax,
@@ -76,7 +78,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
           credentials.data.email,
           credentials.data.password
         );
-        setSessionCookie(reply, session, secureCookies);
+        setSessionCookie(reply, session, sameSite, secureCookies);
         return reply.code(201).send({ user: session.user });
       } catch (error) {
         if (error instanceof DuplicateAccountError) {
@@ -105,7 +107,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
 
       try {
         const session = await authService.login(credentials.data.email, credentials.data.password);
-        setSessionCookie(reply, session, secureCookies);
+        setSessionCookie(reply, session, sameSite, secureCookies);
         return { user: session.user };
       } catch (error) {
         if (error instanceof InvalidCredentialsError) {
@@ -134,6 +136,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
 
     reply.clearCookie(sessionCookieName, {
       ...cookieBaseOptions,
+      sameSite,
       secure: secureCookies
     });
     return reply.code(204).send();

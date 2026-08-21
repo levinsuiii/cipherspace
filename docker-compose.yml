@@ -24,6 +24,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-cipherspace}:${POSTGRES_PASSWORD:-cipherspace_dev}@postgres:5432/${POSTGRES_DB:-cipherspace}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL-}
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-10}
       AUTH_RATE_LIMIT_WINDOW_MS: ${AUTH_RATE_LIMIT_WINDOW_MS:-60000}
       CORS_ORIGINS: ${CORS_ORIGINS-}
@@ -32,8 +34,10 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3000
       REQUEST_BODY_LIMIT_BYTES: ${REQUEST_BODY_LIMIT_BYTES:-1500000}
+      SESSION_COOKIE_SAME_SITE: ${SESSION_COOKIE_SAME_SITE:-strict}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
     cap_drop:
@@ -49,6 +53,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL-}
     depends_on:
       - api
     ports:

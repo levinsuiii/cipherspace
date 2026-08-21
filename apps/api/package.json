@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "db:migrate": "tsx src/database/migrate.ts",
+    "db:migrate:deploy": "node dist/database/migrate.js",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
+    "start:deploy": "npm run db:migrate:deploy && npm start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "db:migrate": "tsx src/database/migrate.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

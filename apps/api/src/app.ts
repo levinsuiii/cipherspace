@@ -41,6 +41,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const config = options.config ?? loadConfig();
   const app = Fastify({
     bodyLimit: config.REQUEST_BODY_LIMIT_BYTES,
+    trustProxy: config.TRUST_PROXY,
     logger:
       options.logger === false || (options.logger === undefined && config.NODE_ENV === "test")
         ? false
@@ -56,7 +57,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
             }
           }
   });
-  const database = options.database ?? createDatabase(config.DATABASE_URL);
+  const database =
+    options.database ?? createDatabase(config.DATABASE_URL, config.DATABASE_POOL_MAX);
   const ownsDatabase = options.database === undefined;
   const authRepository = options.authRepository ?? new PostgresAuthRepository(database);
   const commentRepository = options.commentRepository ?? new PostgresCommentRepository(database);
@@ -160,6 +162,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       rateLimitMax: config.AUTH_RATE_LIMIT_MAX,
       rateLimitWindowMs: config.AUTH_RATE_LIMIT_WINDOW_MS,
       authService,
+      sameSite: config.SESSION_COOKIE_SAME_SITE,
       secureCookies: config.NODE_ENV === "production"
     });
   });

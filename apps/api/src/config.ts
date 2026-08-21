@@ -19,6 +19,10 @@ const weakProductionSecretPatterns = [
   /replace/i
 ];
 
+const booleanString = z
+  .enum(["true", "false"])
+  .transform((value) => value === "true");
+
 const environmentSchema = z.object({
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).max(1_000).default(10),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce
@@ -29,10 +33,15 @@ const environmentSchema = z.object({
     .default(60_000),
   CORS_ORIGINS: z.string().optional(),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   HOST: z.string().min(1).default("127.0.0.1"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
+  MIGRATIONS_DATABASE_URL: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).optional()
+  ),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   REQUEST_BODY_LIMIT_BYTES: z.coerce
@@ -41,8 +50,10 @@ const environmentSchema = z.object({
     .min(4_096)
     .max(5 * 1024 * 1024)
     .default(1_500_000),
+  SESSION_COOKIE_SAME_SITE: z.enum(["strict", "lax", "none"]).default("strict"),
   SESSION_SECRET: z.string().min(32).max(512),
-  SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7)
+  SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
+  TRUST_PROXY: booleanString.default("false")
 });
 
 type ParsedEnvironment = z.infer<typeof environmentSchema>;
@@ -132,7 +143,13 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
 
   try {
     validateDatabaseUrl(result.data.DATABASE_URL);
+    if (result.data.MIGRATIONS_DATABASE_URL) {
+      validateDatabaseUrl(result.data.MIGRATIONS_DATABASE_URL);
+    }
     validateSessionSecret(result.data.SESSION_SECRET, result.data.NODE_ENV);
+    if (result.data.SESSION_COOKIE_SAME_SITE === "none" && result.data.NODE_ENV !== "production") {
+      throw new Error("SESSION_COOKIE_SAME_SITE=none requires NODE_ENV=production");
+    }
     return {
       ...result.data,
       CORS_ORIGINS: parseCorsOrigins(result.data.CORS_ORIGINS, result.data.NODE_ENV)

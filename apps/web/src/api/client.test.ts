@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { api, ApiError } from "./client";
+import { api, ApiError, normalizeApiBaseUrl } from "./client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe("API client", () => {
+  it("normalizes an optional public API origin and rejects unsafe values", () => {
+    expect(normalizeApiBaseUrl(undefined)).toBe("");
+    expect(normalizeApiBaseUrl("https://api.example.com/")).toBe("https://api.example.com");
+    expect(() => normalizeApiBaseUrl("/api")).toThrow(/absolute HTTP\(S\) origin/);
+    expect(() => normalizeApiBaseUrl("https://api.example.com/v1")).toThrow(/without a path/);
+  });
+
   it("includes browser credentials on authenticated requests", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ workspaces: [] }), {

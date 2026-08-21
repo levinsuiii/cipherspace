@@ -2,6 +2,9 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
+ARG VITE_API_BASE_URL=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
@@ -17,6 +20,7 @@ COPY apps/web/tsconfig.node.json apps/web/tsconfig.node.json
 COPY apps/web/vite.config.ts apps/web/vite.config.ts
 COPY apps/web/vitest.config.ts apps/web/vitest.config.ts
 COPY apps/web/index.html apps/web/index.html
+COPY apps/web/public apps/web/public
 COPY apps/web/src apps/web/src
 RUN npm run build --workspace @cipherspace/web
 

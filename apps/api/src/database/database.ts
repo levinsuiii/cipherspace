@@ -12,8 +12,8 @@ export interface Database extends DatabaseSession {
   transaction<Result>(operation: (database: DatabaseSession) => Promise<Result>): Promise<Result>;
 }
 
-export function createDatabase(databaseUrl: string): Database {
-  const pool = new Pool({ connectionString: databaseUrl });
+export function createDatabase(databaseUrl: string, maxConnections = 10): Database {
+  const pool = new Pool({ connectionString: databaseUrl, max: maxConnections });
 
   return {
     close: () => pool.end(),

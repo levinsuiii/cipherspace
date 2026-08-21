@@ -23,13 +23,16 @@ const testConfig: AppConfig = {
   AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
+  DATABASE_POOL_MAX: 10,
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
   PORT: 3000,
   REQUEST_BODY_LIMIT_BYTES: 1_500_000,
+  SESSION_COOKIE_SAME_SITE: "strict",
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
-  SESSION_TTL_HOURS: 168
+  SESSION_TTL_HOURS: 168,
+  TRUST_PROXY: false
 };
 
 const ids = {

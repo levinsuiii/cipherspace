@@ -8,6 +8,14 @@ CipherSpace is a local-first encrypted collaboration workspace. The current impl
 - npm 10 or newer
 - Docker with Docker Compose
 
+## Recommended Codex workflow
+
+- Use one task per feature, fix, or documentation change so the working context stays focused.
+- Start a fresh chat for each new task instead of carrying unrelated history forward.
+- Write focused prompts that name the desired outcome, relevant area or files, constraints, non-goals, and verification commands.
+- Ask Codex to read `AGENTS.md`, the relevant files in `docs/`, and the root and relevant workspace `package.json` manifests before inspecting source code.
+- Keep follow-up requests within the current task; open a fresh chat when the goal changes.
+
 ## Run the full stack with Docker
 
 From a fresh clone:
@@ -73,6 +81,26 @@ npm run build --workspace @cipherspace/web
 npm run preview --workspace @cipherspace/web
 ```
 
+## Free public-beta deployment
+
+The documented no-cost path uses a Neon Free Postgres database, a Render Free API web service, and a Cloudflare Pages static frontend. Provider HTTPS and generated provider subdomains are sufficient; a custom domain is not required. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact setup, environment variables, migration behavior, health checks, browser verification, and current free-tier limitations.
+
+Production differs from local Docker in three intentional ways:
+
+- `DATABASE_URL` points to the hosted runtime database, while optional `MIGRATIONS_DATABASE_URL` can use the provider's direct connection for schema migrations.
+- The static build receives the public, non-secret `VITE_API_BASE_URL`, such as `https://cipherspace-api.onrender.com`. An empty value preserves the local same-origin `/api` behavior.
+- The API sets `CORS_ORIGINS` to the exact deployed frontend origin. Separate provider domains also require `SESSION_COOKIE_SAME_SITE=none`, `NODE_ENV=production`, and `TRUST_PROXY=true`; local Docker keeps strict same-site cookies and does not trust forwarded headers.
+
+Deployment-oriented commands are:
+
+```powershell
+npm run build:production
+npm run db:migrate:deploy
+npm run start:deploy
+```
+
+`start:deploy` applies pending migrations from compiled JavaScript before starting the API. The API Docker image uses the same command, and `render.yaml` describes the free Render service plus `/health` readiness check. Do not put `SESSION_SECRET`, database credentials, or other secrets into frontend variables or committed files.
+
 The frontend provides login and registration, a protected application shell, workspace listing and creation, workspace details and membership listing, a local-first note editor, encrypted note discussions, and manual conflict resolution. Workspaces, encrypted local note envelopes, cached encrypted versions, pending changes, sync cursors, retry state, and encrypted conflict snapshots are stored in IndexedDB through Dexie. Creating, editing, and deleting a note writes locally without calling a mutation API, survives reloads, and displays unsynced or conflict indicators. Comments use React Query and the authenticated API directly; they are not currently durable offline data or part of note push/pull sync.
 
 The workspace UI provides a minimal local-only key creation/unlock flow and an explicit **Sync** action. A random AES-256-GCM workspace key is protected under a separate local unlock password and only the protected key envelope is persisted in IndexedDB. After reload, enter the same local unlock password to recover the same workspace key; the unwrapped key remains in memory only. Note creates, edits, and conflict resolutions are encrypted through `@cipherspace/crypto` before the local note and pending operation are committed, so sync reuses the durable ciphertext and never needs a plaintext queue payload.
@@ -86,7 +114,7 @@ Opening a local or server-backed note decrypts its envelope only after the works
 CipherSpace applies the following practical hardening controls:
 
 - Account passwords are stored only as Argon2id hashes using 19 MiB of memory, two iterations, one lane, and a 32-byte hash. Login failures are generic, including the unknown-account path.
-- Sessions use 256-bit random opaque tokens. PostgreSQL stores only keyed HMAC-SHA-256 token digests. Cookies are host-only, HTTP-only, `SameSite=Strict`, high priority, and `Secure` in production. Authenticated API responses use `Cache-Control: no-store`.
+- Sessions use 256-bit random opaque tokens. PostgreSQL stores only keyed HMAC-SHA-256 token digests. Cookies are host-only, HTTP-only, high priority, and `Secure` in production. `SESSION_COOKIE_SAME_SITE` defaults to `strict`; a separately hosted production frontend can explicitly use `none` with exact credentialed CORS. Authenticated API responses use `Cache-Control: no-store`.
 - Registration and login share an IP-based rate-limit bucket. Defaults are 10 attempts per 60 seconds and can be changed with `AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`. The v1 limiter is in memory per API process; multi-instance deployments need a shared rate-limit store.
 - Credentialed CORS is limited to exact origins from `CORS_ORIGINS`. Wildcards, URL paths, and embedded credentials are rejected. Production must set the variable explicitly; set it to an empty value when all browser traffic is same-origin.
 - The API applies CSP, clickjacking, MIME-sniffing, referrer, cross-origin, and related security headers through Helmet. HSTS is enabled by the API only in production. The Docker Nginx frontend applies a restrictive CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a restrictive permissions policy, and same-origin opener/resource policies. A production TLS edge must also apply HSTS to frontend responses.
@@ -98,7 +126,7 @@ CipherSpace applies the following practical hardening controls:
 - New local note, queue, conflict, and resolution records store encrypted envelopes and `null` legacy plaintext fields. A key-dependent compatibility migration encrypts legacy schema v1-v4 plaintext after the correct workspace is unlocked.
 - Docker Compose binds PostgreSQL, API, and web ports to loopback by default. The API container runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` filesystem. Development database credentials and the marked development session secret are not suitable for production.
 
-`SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` must be a PostgreSQL URL. Body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
+`SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` and optional `MIGRATIONS_DATABASE_URL` must be PostgreSQL URLs. Pool size, proxy trust, cookie policy, body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
 
 Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; there is no key sharing, recovery, rotation, revocation, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter; a malicious delivered frontend, extension, same-origin script, or compromised unlocked device can access plaintext and key material. See `docs/THREAT_MODEL.md` for the complete boundary.
 
@@ -117,7 +145,7 @@ Prepare three accounts: an owner, a viewer member added by the owner, and an out
 9. **Authentication failures:** request a protected endpoint without a cookie and with `Cookie: cipherspace_session=invalid`; both must return the same safe `401 unauthorized` body. Send malformed JSON and an auth body larger than 4 KiB; expect safe `400` and `413 request_too_large` responses without echoed input. Exceed the configured auth attempt count from one client IP; expect `429 rate_limit_exceeded` plus `Retry-After`.
 10. **Docker/local regression:** run `docker compose config`, then `docker compose up --build`. Confirm PostgreSQL becomes healthy, migrations complete, `http://localhost:8080/health` returns `200`, registration/login/sync still work, and `docker compose ps` shows all services running. Confirm the API and database are reachable only on the configured loopback bind addresses unless you intentionally changed them.
 
-For CORS/header checks, send a preflight with `Origin: http://localhost:5173` and confirm that exact origin plus `Access-Control-Allow-Credentials: true` is returned. Repeat with `Origin: https://attacker.example` and confirm there is no `Access-Control-Allow-Origin`. Inspect frontend and API responses for the headers described above. In production, serve only over HTTPS, set `NODE_ENV=production`, set a new random `SESSION_SECRET`, use non-development database credentials, and set `CORS_ORIGINS` to the deployed frontend origin or an empty value for same-origin-only operation.
+For CORS/header checks, send a preflight with `Origin: http://localhost:5173` and confirm that exact origin plus `Access-Control-Allow-Credentials: true` is returned. Repeat with `Origin: https://attacker.example` and confirm there is no `Access-Control-Allow-Origin`. Inspect frontend and API responses for the headers described above. In production, serve only over HTTPS, set `NODE_ENV=production`, set a new random `SESSION_SECRET`, use non-development database credentials, and set `CORS_ORIGINS` to the deployed frontend origin or an empty value for same-origin-only operation. The documented separate-domain deployment also sets `SESSION_COOKIE_SAME_SITE=none` and enables `TRUST_PROXY` only behind the hosting provider's trusted edge.
 
 ## Manual frontend check
 
@@ -185,9 +213,9 @@ Conflict snapshots remain in IndexedDB as encrypted resolved history. The origin
 
 ## Authentication
 
-Passwords must be between 12 and 128 characters. They are hashed with Argon2id before storage. Registering or logging in sets an opaque session token in the `cipherspace_session` cookie. The cookie is HTTP-only, uses `SameSite=Strict` and high priority, and is marked `Secure` when `NODE_ENV=production`. PostgreSQL stores only an HMAC-SHA-256 digest of the token.
+Passwords must be between 12 and 128 characters. They are hashed with Argon2id before storage. Registering or logging in sets an opaque session token in the `cipherspace_session` cookie. The cookie is host-only, HTTP-only, high priority, and marked `Secure` when `NODE_ENV=production`. Its `SameSite` policy defaults to `Strict` and is configurable for the documented cross-site production topology. PostgreSQL stores only an HMAC-SHA-256 digest of the token.
 
-`SESSION_SECRET` is required and must contain at least 32 UTF-8 bytes. Production rejects the documented development/placeholder marker, so deploy with a securely generated value. Changing it invalidates existing sessions. `SESSION_TTL_HOURS` defaults to 168 (seven days) and accepts values from 1 through 720. Auth rate limiting defaults to 10 registration/login attempts per IP per 60 seconds.
+`SESSION_SECRET` is required and must contain at least 32 UTF-8 bytes. Production rejects the documented development/placeholder marker, so deploy with a securely generated value. Changing it invalidates existing sessions. `SESSION_TTL_HOURS` defaults to 168 (seven days) and accepts values from 1 through 720. `SESSION_COOKIE_SAME_SITE` defaults to `strict`; use `none` only for the documented HTTPS cross-origin deployment. Auth rate limiting defaults to 10 registration/login attempts per IP per 60 seconds.
 
 The following PowerShell-compatible curl examples use a cookie jar. Use a development server (`npm run dev`) for plain-HTTP local requests:
 
