@@ -144,9 +144,14 @@ summary { display: flex; min-height: 2.75rem; align-items: center; padding: 0.75
 .recovery-status { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .recovery-status h2, .replacement-identity h2 { margin-bottom: 0; }
 .identity-status { display: inline-flex; align-items: center; padding: 0.35rem 0.65rem; border: 1px solid var(--border); border-radius: 999px; font-family: "DM Mono", monospace; font-size: 0.68rem; text-transform: uppercase; white-space: nowrap; }
-.identity-status--checking { color: #e7d18c; border-color: #806d38; }
+.identity-status--checking,
+.identity-status--local-unregistered,
+.identity-status--missing-unregistered { color: #e7d18c; border-color: #806d38; }
 .identity-status--ready { color: var(--accent); border-color: #507f6e; }
-.identity-status--missing { color: #ffb1b1; border-color: #8f4949; }
+.identity-status--error,
+.identity-status--identity-mismatch,
+.identity-status--missing,
+.identity-status--missing-registered { color: #ffb1b1; border-color: #8f4949; }
 .recovery-warning { margin: 0; }
 .recovery-warning strong { color: #f0d582; }
 .recovery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }

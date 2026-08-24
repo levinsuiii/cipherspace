@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import type { User } from "../api/types";
 import { localDatabase } from "../local-storage/database";
 import { LocalUserIdentityRepository } from "../local-storage/userIdentityRepository";
-import { ensureLocalUserCryptoIdentity } from "./userIdentity";
+import { ensureLocalUserCryptoIdentity, inspectUserCryptoIdentity } from "./userIdentity";
 
 const user: User = {
   createdAt: "2026-08-21T10:00:00.000Z",
@@ -48,7 +48,37 @@ describe("local user encryption identity", () => {
     const stored = await new LocalUserIdentityRepository(localDatabase, user.id).get();
     expect(stored?.protectedPrivateKey.ciphertext).toEqual(expect.any(String));
     expect(stored).not.toHaveProperty("privateKey");
+    vi.mocked(api.cryptoIdentity.get).mockResolvedValue({
+      identity: {
+        algorithm: stored!.algorithm,
+        createdAt: stored!.created_at,
+        keyVersion: stored!.keyVersion,
+        publicKey: stored!.publicKey,
+        updatedAt: stored!.updated_at,
+        userId: user.id
+      }
+    });
+    await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("ready");
   }, 30_000);
+
+  it("distinguishes first-device setup from recovery on a device without a local identity", async () => {
+    vi.spyOn(api.cryptoIdentity, "get").mockRejectedValueOnce(
+      new ApiError("No encryption identity is registered.", 404, "identity_not_found")
+    );
+    await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("missing-unregistered");
+
+    vi.mocked(api.cryptoIdentity.get).mockResolvedValueOnce({
+      identity: {
+        algorithm: "RSA-OAEP-3072-SHA256",
+        createdAt: user.createdAt,
+        keyVersion: 1,
+        publicKey: "registered-public-key",
+        updatedAt: user.createdAt,
+        userId: user.id
+      }
+    });
+    await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("missing-registered");
+  });
 
   it("does not replace a registered identity when its private key is missing locally", async () => {
     vi.spyOn(api.cryptoIdentity, "get").mockResolvedValue({

@@ -186,6 +186,11 @@ The implemented v1 primitives are:
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
 - Generate a per-user 3072-bit RSA-OAEP identity with SHA-256 in WebCrypto. Upload only canonical-base64 SPKI public keys; encrypt the PKCS8 private key locally with PBKDF2-HMAC-SHA-256 and AES-256-GCM under the account password used when the identity was created.
+- Classify device setup from both sides of the identity boundary: no local identity and no registered
+  public key is first-device setup; a registered public key without its matching local private key is
+  recovery/import setup. Require a verified local/registered match before enabling workspace
+  creation. If local persistence succeeds but public-key registration fails, retry registration of
+  that same protected identity rather than generating another key.
 - Export a versioned JSON recovery kit by decrypting that local identity only in memory and
   re-encrypting its PKCS8 private key with AES-256-GCM under a separate 16-to-128-character recovery
   passphrase. PBKDF2-HMAC-SHA-256 uses a fresh 128-bit salt and 600,000 iterations, and AES-GCM uses

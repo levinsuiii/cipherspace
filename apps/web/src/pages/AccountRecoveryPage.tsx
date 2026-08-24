@@ -1,18 +1,37 @@
-import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
+import { type ChangeEvent, type FormEvent, useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
+import { EncryptionIdentitySetup } from "../components/EncryptionIdentitySetup";
 import {
   exportLocalUserRecoveryKit,
   importLocalUserRecoveryKit,
   parseRecoveryKitText
 } from "../key-management/recovery";
-import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
+import type { UserCryptoIdentityStatus } from "../key-management/userIdentity";
 
-type IdentityStatus = "checking" | "missing" | "ready";
+function identityStatusLabel(status: UserCryptoIdentityStatus): string {
+  switch (status) {
+    case "ready":
+      return "Available locally and registered";
+    case "missing-unregistered":
+      return "First-device setup required";
+    case "local-unregistered":
+      return "Public key registration incomplete";
+    case "missing-registered":
+      return "Recovery kit required on this device";
+    case "identity-mismatch":
+      return "Local identity does not match account";
+    case "error":
+      return "Status unavailable";
+    default:
+      return "Checking…";
+  }
+}
 
 export function AccountRecoveryPage() {
   const { identityRestored, user } = useAuth();
-  const [identityStatus, setIdentityStatus] = useState<IdentityStatus>("checking");
+  const [identityStatus, setIdentityStatus] = useState<UserCryptoIdentityStatus>("checking");
+  const [identityRefreshToken, setIdentityRefreshToken] = useState(0);
   const [accountPassword, setAccountPassword] = useState("");
   const [recoveryPassphrase, setRecoveryPassphrase] = useState("");
   const [recoveryConfirmation, setRecoveryConfirmation] = useState("");
@@ -28,17 +47,12 @@ export function AccountRecoveryPage() {
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
-  const refreshStatus = async () => {
-    if (!user) return;
-    const identity = await readLocalUserCryptoIdentity(user.id);
-    setIdentityStatus(identity ? "ready" : "missing");
-  };
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [user]);
-
   if (!user) return null;
+
+  const hasLocalIdentity =
+    identityStatus === "ready" ||
+    identityStatus === "local-unregistered" ||
+    identityStatus === "identity-mismatch";
 
   const createKit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -108,7 +122,7 @@ export function AccountRecoveryPage() {
       await importLocalUserRecoveryKit({
         accountPassword: importAccountPassword,
         kit: parseRecoveryKitText(importText),
-        overwriteExisting: identityStatus === "ready" && confirmOverwrite,
+        overwriteExisting: hasLocalIdentity && confirmOverwrite,
         recoveryPassphrase: importPassphrase,
         user
       });
@@ -117,7 +131,8 @@ export function AccountRecoveryPage() {
       setConfirmOverwrite(false);
       setImportText("");
       identityRestored();
-      await refreshStatus();
+      setIdentityStatus("checking");
+      setIdentityRefreshToken((current) => current + 1);
       setImportSuccess(
         "Encryption identity restored on this device. Existing workspace key shares can now be unlocked normally."
       );
@@ -144,13 +159,14 @@ export function AccountRecoveryPage() {
           <h2 id="recovery-status-title">Local crypto identity</h2>
         </div>
         <span className={`identity-status identity-status--${identityStatus}`} role="status">
-          {identityStatus === "checking"
-            ? "Checking…"
-            : identityStatus === "ready"
-              ? "Available locally"
-              : "Missing locally"}
+          {identityStatusLabel(identityStatus)}
         </span>
       </section>
+
+      <EncryptionIdentitySetup
+        onStatusChange={setIdentityStatus}
+        refreshToken={identityRefreshToken}
+      />
 
       <div className="warning-callout recovery-warning" role="note">
         <strong>Keep the recovery kit and its passphrase separate.</strong> Losing both the local
@@ -236,7 +252,11 @@ export function AccountRecoveryPage() {
             </>
           ) : (
             <div className="warning-callout">
-              There is no private identity in this browser to export. Import a recovery kit first.
+              {identityStatus === "missing-unregistered"
+                ? "This account has no registered public key yet. Set up this device above before exporting a recovery kit."
+                : identityStatus === "local-unregistered"
+                  ? "Complete public-key registration above before exporting a recovery kit."
+                  : "There is no verified matching private identity in this browser to export. Import the account's recovery kit first."}
             </div>
           )}
         </section>
@@ -289,7 +309,7 @@ export function AccountRecoveryPage() {
               />
               <small>Re-encrypts the restored private key for local use on this device.</small>
             </label>
-            {identityStatus === "ready" ? (
+            {hasLocalIdentity ? (
               <label className="confirmation-check">
                 <input
                   checked={confirmOverwrite}
@@ -306,7 +326,7 @@ export function AccountRecoveryPage() {
             {importSuccess ? <div className="form-success" role="status">{importSuccess}</div> : null}
             <button
               className="button button--primary"
-              disabled={isImporting || (identityStatus === "ready" && !confirmOverwrite)}
+              disabled={isImporting || (hasLocalIdentity && !confirmOverwrite)}
             >
               {isImporting ? "Restoring…" : "Import recovery kit"}
             </button>
@@ -314,7 +334,7 @@ export function AccountRecoveryPage() {
         </section>
       </div>
 
-      {identityStatus === "missing" ? (
+      {identityStatus === "missing-registered" || identityStatus === "identity-mismatch" ? (
         <section className="panel replacement-identity" aria-labelledby="replacement-title">
           <p className="eyebrow">Without a recovery kit</p>
           <h2 id="replacement-title">Create a replacement identity and re-share access</h2>

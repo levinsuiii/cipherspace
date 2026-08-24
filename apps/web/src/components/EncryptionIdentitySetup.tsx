@@ -1,53 +1,122 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
+import {
+  inspectUserCryptoIdentity,
+  type UserCryptoIdentityStatus
+} from "../key-management/userIdentity";
 
-export function EncryptionIdentitySetup() {
+interface EncryptionIdentitySetupProps {
+  onStatusChange?: (status: UserCryptoIdentityStatus) => void;
+  refreshToken?: number;
+}
+
+export function EncryptionIdentitySetup({
+  onStatusChange,
+  refreshToken = 0
+}: EncryptionIdentitySetupProps) {
   const auth = useAuth();
   const { user } = auth;
-  const [status, setStatus] = useState<
-    "checking" | "missing-registered" | "missing-unregistered" | "ready"
-  >("checking");
+  const [status, setStatus] = useState<UserCryptoIdentityStatus>("checking");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [recoveryRecommended, setRecoveryRecommended] = useState(false);
+
+  const refreshStatus = useCallback(async () => {
+    if (!user) return;
+    setStatus("checking");
+    setError(null);
+    try {
+      setStatus(await inspectUserCryptoIdentity(user.id));
+    } catch (caught) {
+      setStatus("error");
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Encryption identity status could not be checked."
+      );
+    }
+  }, [user]);
 
   useEffect(() => {
     let active = true;
     if (!user) return;
     void (async () => {
-      const identity = await readLocalUserCryptoIdentity(user.id);
-      if (identity && !auth.identityError) {
-        if (active) setStatus("ready");
-        return;
-      }
       try {
-        await api.cryptoIdentity.get();
-        if (active) setStatus("missing-registered");
-      } catch (error) {
-        if (active) {
-          setStatus(
-            error instanceof ApiError && error.status === 404
-              ? "missing-unregistered"
-              : "missing-registered"
-          );
-        }
+        const inspected = await inspectUserCryptoIdentity(user.id);
+        if (active) setStatus(inspected);
+      } catch (caught) {
+        if (!active) return;
+        setStatus("error");
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Encryption identity status could not be checked."
+        );
       }
     })();
     return () => { active = false; };
-  }, [auth.identityError, user]);
+  }, [auth.identityError, refreshToken, user]);
 
-  if (!user || status === "checking" || status === "ready") return null;
+  useEffect(() => {
+    onStatusChange?.(status);
+  }, [onStatusChange, status]);
 
-  if (status === "missing-registered") {
+  if (!user || status === "checking") return null;
+
+  if (status === "ready") {
+    if (!recoveryRecommended) return null;
+    return (
+      <section className="panel identity-setup" aria-labelledby="identity-ready-title">
+        <div>
+          <p className="eyebrow">Device ready</p>
+          <h2 id="identity-ready-title">Encryption identity created</h2>
+          <p>
+            The public key is registered and the protected private key remains only in this
+            browser. Export an encrypted recovery kit now so another device can restore this same
+            identity if browser data is lost.
+          </p>
+        </div>
+        <div className="identity-recovery-actions">
+          <Link className="button button--primary" to="/account/security/recovery">
+            Export recovery kit
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <section className="panel identity-setup" aria-labelledby="identity-error-title">
+        <div>
+          <p className="eyebrow">Status unavailable</p>
+          <h2 id="identity-error-title">Encryption identity could not be checked</h2>
+          {error ? <div className="form-error" role="alert">{error}</div> : null}
+        </div>
+        <button
+          className="button button--secondary"
+          onClick={() => void refreshStatus()}
+          type="button"
+        >
+          Check again
+        </button>
+      </section>
+    );
+  }
+
+  if (status === "missing-registered" || status === "identity-mismatch") {
     return (
       <section className="panel identity-setup" aria-labelledby="identity-recovery-title">
         <div>
           <p className="eyebrow">New device / missing browser data</p>
-          <h2 id="identity-recovery-title">Your private encryption identity is missing</h2>
+          <h2 id="identity-recovery-title">
+            {status === "identity-mismatch"
+              ? "This device has a different encryption identity"
+              : "Your private encryption identity is missing"}
+          </h2>
           <p>
             This account has a registered public identity, but this browser does not have the
             matching private key. Import your encrypted recovery kit before opening shared
@@ -77,8 +146,15 @@ export function EncryptionIdentitySetup() {
     setIsSubmitting(true);
     try {
       await auth.ensureIdentity(password);
+      const inspected = await inspectUserCryptoIdentity(user.id);
+      if (inspected !== "ready") {
+        throw new Error(
+          "Encryption identity setup did not produce a matching local and registered identity."
+        );
+      }
       setPassword("");
       setStatus("ready");
+      setRecoveryRecommended(true);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Encryption identity setup failed.");
     } finally {
@@ -90,10 +166,15 @@ export function EncryptionIdentitySetup() {
     <section className="panel identity-setup" aria-labelledby="identity-setup-title">
       <div>
         <p className="eyebrow">Required setup</p>
-        <h2 id="identity-setup-title">Set up your encryption identity</h2>
+        <h2 id="identity-setup-title">
+          {status === "local-unregistered"
+            ? "Complete encryption identity setup"
+            : "Set up this device for encryption"}
+        </h2>
         <p>
-          CipherSpace will create a client-side RSA key pair. Only the public key is registered;
-          the private key is encrypted in this browser with your account password.
+          {status === "local-unregistered"
+            ? "A protected private identity already exists in this browser. Verify it with your account password to register only its public key."
+            : "CipherSpace will create a client-side RSA key pair. Only the public key is registered; the private key is encrypted in this browser with your account password."}
         </p>
       </div>
       <form className="form-stack" onSubmit={(event) => void handleSubmit(event)}>

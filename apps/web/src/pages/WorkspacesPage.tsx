@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
 import { EncryptionIdentitySetup } from "../components/EncryptionIdentitySetup";
+import type { UserCryptoIdentityStatus } from "../key-management/userIdentity";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
 import { formatDate } from "../utils";
@@ -14,6 +15,7 @@ export function WorkspacesPage() {
   const queryClient = useQueryClient();
   const localData = useLocalData();
   const [name, setName] = useState("");
+  const [identityStatus, setIdentityStatus] = useState<UserCryptoIdentityStatus>("checking");
   const cachedWorkspacesQuery = useLocalQuery(
     () => localData.listWorkspaces(),
     [localData]
@@ -39,7 +41,7 @@ export function WorkspacesPage() {
   const handleCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = name.trim();
-    if (trimmedName) {
+    if (trimmedName && identityStatus === "ready") {
       createMutation.mutate(trimmedName);
     }
   };
@@ -56,7 +58,7 @@ export function WorkspacesPage() {
         </div>
       </header>
 
-      <EncryptionIdentitySetup />
+      <EncryptionIdentitySetup onStatusChange={setIdentityStatus} />
 
       <div className="split-layout">
         <div>
@@ -107,6 +109,11 @@ export function WorkspacesPage() {
           <p className="eyebrow">New workspace</p>
           <h2>Create a workspace</h2>
           <p>Workspace names are visible to the server and all members.</p>
+          {identityStatus !== "ready" ? (
+            <div className="warning-callout" role="status">
+              Set up or restore this device's encryption identity before creating a workspace.
+            </div>
+          ) : null}
           <form className="form-stack" onSubmit={handleCreate}>
             <label>
               Workspace name
@@ -124,7 +131,9 @@ export function WorkspacesPage() {
             ) : null}
             <button
               className="button button--primary"
-              disabled={createMutation.isPending || !name.trim()}
+              disabled={
+                createMutation.isPending || !name.trim() || identityStatus !== "ready"
+              }
             >
               {createMutation.isPending ? "Creating…" : "Create workspace"}
             </button>

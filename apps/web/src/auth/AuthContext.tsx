@@ -48,17 +48,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const establishSession = async (
     operation: () => Promise<{ user: User }>,
-    accountPassword: string
+    accountPassword?: string
   ): Promise<void> => {
     const { user } = await operation();
     cacheOfflineUser(user);
-    queryClient.setQueryData(authQueryKey, user);
-    try {
-      await ensureLocalUserCryptoIdentity(user, accountPassword);
+    if (accountPassword) {
+      try {
+        await ensureLocalUserCryptoIdentity(user, accountPassword);
+        setIdentityError(null);
+      } catch (error) {
+        setIdentityError(error instanceof Error ? error : new Error(String(error)));
+      }
+    } else {
       setIdentityError(null);
-    } catch (error) {
-      setIdentityError(error instanceof Error ? error : new Error(String(error)));
     }
+    queryClient.setQueryData(authQueryKey, user);
   };
 
   return (
@@ -90,7 +94,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
             predicate: (query) => query.queryKey[0] !== authQueryKey[0]
           });
         },
-        register: (credentials) => establishSession(() => api.auth.register(credentials), credentials.password),
+        register: (credentials) => establishSession(() => api.auth.register(credentials)),
         user: authQuery.data ?? null
       }}
     >

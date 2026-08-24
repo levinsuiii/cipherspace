@@ -207,6 +207,19 @@ bodies are encrypted at rest in IndexedDB; locking clears readable note UI state
 unwrapped workspace key from memory. Note IDs, workspace IDs, membership, identity/share metadata,
 timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible.
 
+## First-device encryption setup
+
+After registration, CipherSpace checks both the backend public-key record and this browser's
+protected private identity. A brand-new account has neither, so the workspace page offers **Set up
+this device for encryption**. Enter the account password to generate the RSA identity in the browser.
+Only the public key is registered with the API; the private key is password-protected in IndexedDB.
+Workspace creation is enabled only after those identities match.
+
+After setup, use the displayed **Export recovery kit** recommendation and store the encrypted kit
+separately from its passphrase. If the backend already has a public key but the browser has no
+matching private identity, CipherSpace treats it as an existing account on a new device (or cleared
+browser) and offers recovery import instead of generating an unrelated replacement identity.
+
 ## Encrypted recovery kit
 
 Open **Security** in the authenticated header to see whether this browser has the local crypto
@@ -233,8 +246,8 @@ To restore on a second browser or device:
 
 1. Export and save the recovery kit before losing the original browser data.
 2. In a separate browser profile/device, sign in to the same CipherSpace account.
-3. Open **Security**. The status should say **Missing locally**, and the workspace page should warn
-   that the registered public identity has no matching local private key.
+3. Open **Security**. The status should say **Recovery kit required on this device**, and the
+   workspace page should warn that the registered public identity has no matching local private key.
 4. Select the JSON file or paste its text, then enter the recovery passphrase and current account
    password. The recovery passphrase decrypts the kit; the account password re-encrypts the restored
    identity for this browser.
@@ -321,19 +334,24 @@ For CORS/header checks, send a preflight with `Origin: http://localhost:5173` an
 
 ## Manual frontend check
 
+For a true first-device check, stop the stack with `docker compose down --volumes`, clear all site
+data for the frontend origin (cookies, IndexedDB, local storage, Cache Storage, and service workers),
+then restart with `docker compose up --build`. This intentionally deletes local development data.
+
 1. Start the local stack and open the frontend.
-2. Register with an email and a password containing 12–128 characters. Registration should open the empty workspace page.
-3. Create a workspace and confirm its overview shows the current account as an owner.
-4. Open **Notes** and confirm the empty state appears.
-5. In the workspace sync panel, choose a separate local unlock password of 12–128 characters and select **Create and unlock key**. Keep that password available; v1 has no recovery.
-6. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes and sync status `idle`.
-7. Select **Sync**. Confirm the status changes through `syncing` to `synced` and the unsynced count drops (normally to zero). The backend stores only ciphertext and metadata.
-8. Edit the note again and confirm the unsynced indicator returns. Select **Sync** again to push the next encrypted version.
-9. Select **Lock** (or reload). Confirm note titles become **Encrypted note** and an open editor no longer shows title/body content. Unlock with the same local password and confirm the readable notes return.
-10. Open a note that exists on the server but has no local draft. Confirm it shows an unlock prompt while locked, then displays the decrypted title and body after unlock.
-11. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
-12. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
-13. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
+2. Register with an email and a password containing 12–128 characters. Registration should open the empty workspace page and offer **Set up this device for encryption**.
+3. Enter the account password and select **Create encryption identity**. Confirm the page recommends **Export recovery kit** and enables workspace creation.
+4. Create a workspace and confirm its overview shows the current account as an owner.
+5. Open **Notes** and confirm the empty state appears.
+6. In the workspace sync panel, choose a separate local unlock password of 12–128 characters and select **Create and unlock key**. Keep that password available; v1 has no recovery.
+7. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes and sync status `idle`.
+8. Select **Sync**. Confirm the status changes through `syncing` to `synced` and the unsynced count drops (normally to zero). The backend stores only ciphertext and metadata.
+9. Edit the note again and confirm the unsynced indicator returns. Select **Sync** again to push the next encrypted version.
+10. Select **Lock** (or reload). Confirm note titles become **Encrypted note** and an open editor no longer shows title/body content. Unlock with the same local password and confirm the readable notes return.
+11. Open a note that exists on the server but has no local draft. Confirm it shows an unlock prompt while locked, then displays the decrypted title and body after unlock.
+12. Stop the API or disable the browser network, then select **Sync** and confirm the UI reports `Server unavailable`. Restart the API and retry; the pending change must remain durable and then sync successfully.
+13. As a workspace owner, delete a note locally and confirm it disappears from the note list while the workspace reports a pending change. Sync the tombstone manually.
+14. Sign out and confirm protected routes redirect to sign-in. Sign back in to reopen the same user-scoped local cache and unlock the workspace again.
 
 ## Manual comments check
 

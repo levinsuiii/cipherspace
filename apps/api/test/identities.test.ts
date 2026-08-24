@@ -112,6 +112,17 @@ afterEach(async () => {
 });
 
 describe("user crypto identity routes", () => {
+  it("reports that a new account has no registered public identity", async () => {
+    const response = await app.inject({
+      headers: { cookie },
+      method: "GET",
+      url: "/api/crypto/identity"
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: { code: "identity_not_found" } });
+  });
+
   it("registers and returns only a validated public identity key", async () => {
     const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 3072 });
     const encodedPublicKey = publicKey.export({ format: "der", type: "spki" }).toString("base64");

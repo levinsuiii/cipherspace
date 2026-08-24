@@ -29,21 +29,31 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - Editing is paused on an unresolved note conflict so users choose a resolution before creating more ordinary edits. Sync status reports `conflict` until the unresolved count clears.
 - Note mutations encrypt create/update snapshots through `@cipherspace/crypto` before IndexedDB persistence. The typed sync engine pushes those durable encrypted envelopes in order, pulls validated remote pages, persists opaque cursors, and safely records failures; a compatibility path can prepare legacy plaintext queue records during migration.
 - The workspace UI creates a random workspace key, protects it locally under a separate unlock password, unlocks it after reload, and supplies the in-memory key to the sync engine.
-- Authentication creates or reuses a versioned RSA-OAEP user identity. Only the SPKI public key is registered; the PKCS8 private key is AES-GCM encrypted in IndexedDB with a PBKDF2 key derived locally from the account password.
+- After account authentication, the client compares the current user's registered public identity
+  with the protected identity in user-scoped IndexedDB. A newly registered account with neither is
+  offered explicit first-device setup; setup generates the versioned RSA-OAEP identity locally,
+  registers only its SPKI public key, and encrypts its PKCS8 private key in IndexedDB with a PBKDF2
+  key derived locally from the account password. Workspace creation stays disabled until the local
+  and registered identities match.
 - Owners fetch an existing user's registered public key, wrap the already-unlocked workspace AES key with RSA-OAEP, and atomically upload the ciphertext while adding membership. The API stores no plaintext workspace or identity private key.
 - A recipient retrieves only their active share, unlocks their client-only identity private key, unwraps the same logical workspace key, and protects it with their own independent local workspace password before using the normal lock/unlock flow.
-- The Account / Security recovery page reports whether the private crypto identity exists in the
-  current browser. It exports a strict version 1 JSON kit containing public identity metadata and
-  the PKCS8 private key encrypted under a separate recovery passphrase, as either a download or
-  copyable text. It never serializes workspace keys, notes, comments, passwords, or auth tokens.
+- The Account / Security recovery page reports both local-private-key and backend-public-key state,
+  distinguishing first-device setup, incomplete registration, matching identity, recovery-required,
+  mismatch, and unavailable status. It exports a strict version 1 JSON kit containing public
+  identity metadata and the PKCS8 private key encrypted under a separate recovery passphrase, as
+  either a download or copyable text. It never serializes workspace keys, notes, comments,
+  passwords, or auth tokens.
 - A logged-in user can import that kit on a new browser/device. Import validates the strict schema
   and account ID, decrypts and verifies the key pair locally, compares the public key with the
   backend identity (or registers it if absent), re-protects the private key with the current account
   password, and then stores it in user-scoped IndexedDB. Existing local identity records require an
   explicit overwrite confirmation.
-- Missing-identity/new-device UI directs users to recovery import and warns that a new unrelated
+- A missing local identity with no backend public key is first-device setup and offers identity
+  creation. A missing local identity when the backend already has a public key is a new-device or
+  lost-browser-data state and directs the user to recovery import. It warns that a new unrelated
   identity cannot open existing shares. Replacement identity plus member re-sharing is not exposed
-  because the backend and crypto format do not yet support a versioned identity migration.
+  because the backend and crypto format do not yet support a versioned identity migration. After
+  first-device setup, the workspace page recommends exporting a recovery kit.
 - Legacy memberships expose `missing` key-share status and can be repaired by an owner. A missing local key cannot initialize an existing/shared workspace; initialization is allowed only for a new empty one-owner workspace.
 - An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`. Dexie live queries update unsynced and conflict counts after sync or resolution state transitions.
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
