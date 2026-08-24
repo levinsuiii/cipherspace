@@ -62,6 +62,15 @@ export function normalizeApiBaseUrl(value: string | undefined): string {
 }
 
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+const apiPathPrefix = "/api";
+
+export function buildApiUrl(apiOrigin: string, path: string): string {
+  if (!path.startsWith("/") || path === apiPathPrefix || path.startsWith(`${apiPathPrefix}/`)) {
+    throw new Error("API client paths must start with / and omit the /api prefix");
+  }
+
+  return `${apiOrigin}${apiPathPrefix}${path}`;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -69,7 +78,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const response = await fetch(buildApiUrl(apiBaseUrl, path), {
     ...init,
     credentials: "include",
     headers
@@ -98,28 +107,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 function workspacePath(workspaceId: string): string {
-  return `/api/workspaces/${encodeURIComponent(workspaceId)}`;
+  return `/workspaces/${encodeURIComponent(workspaceId)}`;
 }
 
 export const api = {
   auth: {
     login: (credentials: Credentials) =>
-      request<{ user: User }>("/api/auth/login", {
+      request<{ user: User }>("/auth/login", {
         body: JSON.stringify(credentials),
         method: "POST"
       }),
-    logout: () => request<void>("/api/auth/logout", { method: "POST" }),
-    me: () => request<{ user: User }>("/api/auth/me"),
+    logout: () => request<void>("/auth/logout", { method: "POST" }),
+    me: () => request<{ user: User }>("/auth/me"),
     register: (credentials: Credentials) =>
-      request<{ user: User }>("/api/auth/register", {
+      request<{ user: User }>("/auth/register", {
         body: JSON.stringify(credentials),
         method: "POST"
       })
   },
   cryptoIdentity: {
-    get: () => request<{ identity: UserCryptoIdentity }>("/api/crypto/identity"),
+    get: () => request<{ identity: UserCryptoIdentity }>("/crypto/identity"),
     register: (identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">) =>
-      request<{ identity: UserCryptoIdentity }>("/api/crypto/identity", {
+      request<{ identity: UserCryptoIdentity }>("/crypto/identity", {
         body: JSON.stringify(identity),
         method: "PUT"
       })
@@ -150,7 +159,7 @@ export const api = {
         method: "POST"
       }),
     create: (name: string) =>
-      request<{ workspace: Workspace }>("/api/workspaces", {
+      request<{ workspace: Workspace }>("/workspaces", {
         body: JSON.stringify({ name }),
         method: "POST"
       }),
@@ -168,7 +177,7 @@ export const api = {
       request<{ keyAccess: WorkspaceKeyAccess }>(`${workspacePath(workspaceId)}/key-access`),
     getOwnKeyShare: (workspaceId: string) =>
       request<{ keyShare: WorkspaceKeyShare }>(`${workspacePath(workspaceId)}/key-share`),
-    list: () => request<{ workspaces: Workspace[] }>("/api/workspaces"),
+    list: () => request<{ workspaces: Workspace[] }>("/workspaces"),
     listMembers: (workspaceId: string) =>
       request<{ members: WorkspaceMember[] }>(`${workspacePath(workspaceId)}/members`),
     putKeyShare: (workspaceId: string, userId: string, input: EncryptedWorkspaceKeyInput) =>

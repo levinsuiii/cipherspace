@@ -87,7 +87,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     allowedHeaders: ["Content-Type"],
     credentials: true,
     maxAge: 600,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     origin: config.CORS_ORIGINS.length > 0 ? config.CORS_ORIGINS : false,
     strictPreflight: true
   });

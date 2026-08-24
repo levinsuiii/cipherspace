@@ -274,6 +274,14 @@ describe("authentication routes", () => {
       method: "OPTIONS",
       url: "/api/auth/login"
     });
+    const allowedIdentityRegistration = await app.inject({
+      headers: {
+        origin: "http://localhost:5173",
+        "access-control-request-method": "PUT"
+      },
+      method: "OPTIONS",
+      url: "/api/crypto/identity"
+    });
     const denied = await app.inject({
       headers: {
         origin: "https://attacker.example",
@@ -286,6 +294,8 @@ describe("authentication routes", () => {
     expect(allowed.statusCode).toBe(204);
     expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
     expect(allowed.headers["access-control-allow-credentials"]).toBe("true");
+    expect(allowedIdentityRegistration.statusCode).toBe(204);
+    expect(allowedIdentityRegistration.headers["access-control-allow-methods"]).toContain("PUT");
     expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
   });
 

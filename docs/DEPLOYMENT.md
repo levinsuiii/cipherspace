@@ -54,6 +54,8 @@ The browser calls the API directly with credentialed CORS. The API session cooki
 
 `VITE_API_BASE_URL` is compiled into the static JavaScript bundle. Changing it requires a new frontend build and deployment. Leaving it empty preserves same-origin `/api` behavior for Vite and local Docker.
 
+Keep this value origin-only. The frontend API client adds the shared `/api` prefix to auth, crypto identity, workspace, note, comment, key recovery, and sync requests. For example, `VITE_API_BASE_URL=https://cipherspace-api.onrender.com` produces `https://cipherspace-api.onrender.com/api/crypto/identity`; do not append `/api` to the environment variable itself.
+
 ## 1. Verify the repository locally
 
 From the repository root:
@@ -165,6 +167,7 @@ In browser developer tools, register a temporary beta account and inspect the ne
 
 - `Access-Control-Allow-Origin` must equal the Pages production origin.
 - `Access-Control-Allow-Credentials` must be `true`.
+- A preflight for identity registration must include `PUT` in `Access-Control-Allow-Methods`.
 - `Set-Cookie` must include `HttpOnly`, `Secure`, and `SameSite=None`.
 - The browser must send the cookie on the following `/api/auth/me` request.
 
@@ -178,18 +181,19 @@ Use a clean browser profile and complete this flow over the deployed HTTPS URLs:
 
 1. Register, log out, log in again, and refresh to confirm the session survives navigation.
 2. Create a workspace and verify its member list.
-3. Create the local workspace key with a separate unlock password. Record it securely; there is no recovery.
-4. Create a note while unlocked, reload, and confirm encrypted local persistence survives.
-5. Sync the note, edit it, sync again, and verify pending counts return to zero.
-6. Open the note, add a comment and a reply, reload/unlock, and confirm they decrypt.
-7. Disable the network, edit a note, restore the network, and confirm the durable pending change syncs.
-8. Exercise a conflict using the manual procedure in `README.md`, then test keep-local, accept-remote, or manual merge.
-9. Lock the workspace while note/comment/merge drafts are visible. Confirm note titles become **Encrypted note**, plaintext fields clear, editing is disabled, and unlock restores persisted content.
-10. Inspect Render logs and Neon rows for the manual plaintext marker described in `README.md`; note/comment plaintext, unlock passwords, raw keys, and session tokens must not appear.
-11. Test the exact desktop/mobile browsers friends will use, especially their cross-site-cookie behavior and the first request after API/database idle time.
-12. At roughly 360px width, complete note editing, comments, locking, and conflict resolution without horizontal page overflow or unreachable controls.
-13. In developer tools, confirm the manifest and 192px/512px/maskable icons load, the service worker controls the page after reload, and Cache Storage contains no `/api/` entries.
-14. Install from Chrome on Android and from Safari's **Share → Add to Home Screen** on iOS. Launch from the icon, background the app, and confirm it returns locked.
+3. Create the encryption identity and inspect the network request. The identity lookup and registration must use `/api/crypto/identity`, not `/crypto/identity`.
+4. Export an encrypted identity recovery kit, then create the local workspace key with a separate unlock password.
+5. Create a note while unlocked, reload, and confirm encrypted local persistence survives.
+6. Sync the note, edit it, sync again, and verify pending counts return to zero.
+7. Open the note, add a comment and a reply, reload/unlock, and confirm they decrypt.
+8. Disable the network, edit a note, restore the network, and confirm the durable pending change syncs.
+9. Exercise a conflict using the manual procedure in `README.md`, then test keep-local, accept-remote, or manual merge.
+10. Lock the workspace while note/comment/merge drafts are visible. Confirm note titles become **Encrypted note**, plaintext fields clear, editing is disabled, and unlock restores persisted content.
+11. Inspect Render logs and Neon rows for the manual plaintext marker described in `README.md`; note/comment plaintext, unlock passwords, raw keys, and session tokens must not appear.
+12. Test the exact desktop/mobile browsers friends will use, especially their cross-site-cookie behavior and the first request after API/database idle time.
+13. At roughly 360px width, complete note editing, comments, locking, and conflict resolution without horizontal page overflow or unreachable controls.
+14. In developer tools, confirm the manifest and 192px/512px/maskable icons load, the service worker controls the page after reload, and Cache Storage contains no `/api/` entries.
+15. Install from Chrome on Android and from Safari's **Share → Add to Home Screen** on iOS. Launch from the icon, background the app, and confirm it returns locked.
 
 ## Free-tier limitations
 
