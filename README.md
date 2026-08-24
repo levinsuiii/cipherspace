@@ -149,7 +149,8 @@ cross-site session cookie required by the documented free-provider deployment.
 
 iOS installation uses Safari's share sheet and may not show a proactive install prompt. Private
 browsing, browser storage clearing, or deleting site data can remove the protected workspace-key
-envelope and encrypted local cache; there is no recovery or device provisioning in v1.
+envelope and encrypted local cache. A previously exported identity recovery kit can restore access
+to server-held workspace key shares, but it does not restore unsynced local data.
 
 ### Manual mobile/PWA test flow
 
@@ -199,7 +200,59 @@ Each user also has a WebCrypto RSA-OAEP identity using a 3072-bit RSA key and SH
 
 PostgreSQL stores accounts/password hashes, sessions/token digests, public identity keys, workspace/membership roles, recipient-specific encrypted workspace-key shares, encrypted note/comment envelopes, and operational metadata. It does not store plaintext note/comment content, plaintext workspace keys, plaintext or locally protected identity private keys, account passwords, or local workspace passwords. IndexedDB stores encrypted note/sync/conflict data, protected workspace-key envelopes, and the locally protected identity-private-key envelope. Unwrapped keys and decrypted content remain client-memory-only while unlocked.
 
-There is no identity/private-key transfer, account or workspace-key recovery, key rotation, cryptographic revocation, sender signature, device verification, or key transparency. Titles and bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the unwrapped workspace key from memory. Note IDs, workspace IDs, membership, identity/share metadata, timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible.
+CipherSpace supports manual identity transfer through an encrypted recovery kit. It does not provide
+account-password recovery, server-side recovery, automatic device pairing, key rotation,
+cryptographic revocation, sender signatures, device verification, or key transparency. Titles and
+bodies are encrypted at rest in IndexedDB; locking clears readable note UI state and removes the
+unwrapped workspace key from memory. Note IDs, workspace IDs, membership, identity/share metadata,
+timestamps, revisions, queue state, ciphertext size, and other operational metadata remain visible.
+
+## Encrypted recovery kit
+
+Open **Security** in the authenticated header to see whether this browser has the local crypto
+identity. When it does, enter the current account password and a unique recovery passphrase of
+16–128 characters, then create the kit. Download the JSON file or copy its text and store it
+separately from the recovery passphrase.
+
+Recovery kit version 1 contains:
+
+- the account/user identifier;
+- the public RSA identity key, algorithm, key version, and identity creation time;
+- the recovery kit creation time and format version;
+- the PKCS8 private identity key encrypted locally with AES-256-GCM under a
+  PBKDF2-HMAC-SHA-256 key derived with a random 128-bit salt and 600,000 iterations, plus the random
+  nonce and KDF metadata.
+
+It does **not** contain plaintext private keys, plaintext or encrypted workspace keys, notes,
+comments, account or workspace passwords, recovery passphrases, auth/session tokens, sync queues, or
+other browser data. Public metadata and ciphertext remain visible to anyone holding the file. The
+encrypted private key is subject to offline passphrase guessing, so use a strong unique passphrase
+and protect both the file and passphrase.
+
+To restore on a second browser or device:
+
+1. Export and save the recovery kit before losing the original browser data.
+2. In a separate browser profile/device, sign in to the same CipherSpace account.
+3. Open **Security**. The status should say **Missing locally**, and the workspace page should warn
+   that the registered public identity has no matching local private key.
+4. Select the JSON file or paste its text, then enter the recovery passphrase and current account
+   password. The recovery passphrase decrypts the kit; the account password re-encrypts the restored
+   identity for this browser.
+5. Import the kit. CipherSpace verifies the recovered key pair and confirms that its public key
+   exactly matches the account's registered identity before changing IndexedDB. An existing local
+   identity requires an explicit replacement confirmation.
+6. Open a shared workspace. Retrieve the existing encrypted workspace-key share, enter the current
+   account password to unlock the restored identity, and choose a new device-local workspace unlock
+   password. Existing notes and comments should decrypt normally.
+
+Wrong passphrases, malformed/tampered kits, kits for another account, and public-key mismatches fail
+without returning private material. The kit is never uploaded; only the existing public identity is
+verified or idempotently registered. If both the local identity and recovery kit (or its passphrase)
+are lost, the server cannot recreate the key or decrypt existing workspace shares. Generating an
+unrelated identity would not restore access; a future versioned identity replacement plus member
+re-sharing flow would be required and is not implemented in v1. The recovery kit also cannot restore
+unsynced local-only notes or a forgotten account password. CipherSpace has not been independently
+security audited.
 
 Opening a local or server-backed note decrypts its envelope only after the workspace is unlocked. Plaintext is held in React memory while displayed. Selecting **Save local change** creates a new encrypted local envelope and encrypted pending operation; it does not persist the title or body as plaintext. A locked workspace replaces titles with **Encrypted note**, clears editor values, and disables editing. A wrong workspace or identity private key produces a generic decryption error without exposing partial content. IndexedDB schema version 5 lazily encrypts older plaintext note, queue, and conflict payloads after the correct workspace key is unlocked; schema version 6 adds protected user identities without replacing existing workspace keys.
 
@@ -225,7 +278,7 @@ CipherSpace applies the following practical hardening controls:
 
 `SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` and optional `MIGRATIONS_DATABASE_URL` must be PostgreSQL URLs. Pool size, proxy trust, cookie policy, body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
 
-Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; there is no identity/device transfer, recovery, rotation, cryptographic revocation, key transparency, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter. Removing a member cannot erase data or keys already obtained. A malicious server can substitute public keys or deliver modified client code, and an extension, same-origin script, or compromised unlocked device can access plaintext and key material. See `docs/THREAT_MODEL.md` for the complete boundary.
+Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; recovery is a manual encrypted-file backup rather than server escrow or device pairing; and there is no key rotation, cryptographic revocation, key transparency, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter. Removing a member cannot erase data or keys already obtained. A malicious server can substitute public keys or deliver modified client code, and an extension, same-origin script, compromised recovery file/passphrase, or compromised unlocked device can access key material and plaintext. See `docs/THREAT_MODEL.md` for the complete boundary.
 
 ## Manual two-user encrypted-sharing test
 
@@ -424,7 +477,7 @@ Non-members receive `404` for workspace-scoped reads, including key-share retrie
 
 ## Encrypted note API
 
-The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note/comment encryption, local password protection, RSA-OAEP user identities, and recipient-specific workspace-key wrapping. The React workspace UI creates, shares, receives, or unlocks that key and passes it to manual sync. Identity/device transfer, recovery, rotation, and cryptographic revocation are not implemented.
+The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note/comment encryption, local password protection, RSA-OAEP user identities, recipient-specific workspace-key wrapping, and versioned encrypted identity recovery kits. The React workspace UI creates, shares, receives, or unlocks workspace keys and passes them to manual sync. Automated device pairing, identity replacement, rotation, and cryptographic revocation are not implemented.
 
 An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
 
@@ -525,5 +578,5 @@ The root `test`, `typecheck`, and `build` commands verify all npm workspaces. Ba
 
 ## Current scope
 
-The responsive frontend, installable PWA shell, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, RSA-OAEP multi-user workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local workspace unlock, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Identity/device transfer, recovery, rotation, cryptographic revocation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
+The responsive frontend, installable PWA shell, encrypted-at-rest local note storage and pending queue, backend foundation, authentication, workspaces, membership roles, RSA-OAEP multi-user workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, client encryption primitives, local workspace unlock, encrypted identity recovery-kit export/import, manual push/pull, idempotency, cursor persistence, retry state, conflict detection, and manual note-edit conflict resolution are implemented. Automated device pairing, identity replacement, rotation, cryptographic revocation, automatic/background sync, automatic merging, offline comment sync, pending invitations, and email delivery remain intentionally unimplemented. See `docs/PROJECT_STATE.md` for current status and planned work.
 

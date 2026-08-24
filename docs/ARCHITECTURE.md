@@ -186,12 +186,21 @@ The implemented v1 primitives are:
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
 - Generate a per-user 3072-bit RSA-OAEP identity with SHA-256 in WebCrypto. Upload only canonical-base64 SPKI public keys; encrypt the PKCS8 private key locally with PBKDF2-HMAC-SHA-256 and AES-256-GCM under the account password used when the identity was created.
+- Export a versioned JSON recovery kit by decrypting that local identity only in memory and
+  re-encrypting its PKCS8 private key with AES-256-GCM under a separate 16-to-128-character recovery
+  passphrase. PBKDF2-HMAC-SHA-256 uses a fresh 128-bit salt and 600,000 iterations, and AES-GCM uses
+  a fresh 96-bit nonce. Authenticated data binds the kit version, user ID, public identity metadata,
+  timestamps, private-key format, and KDF/encryption parameters.
+- Import a recovery kit only for the logged-in kit owner, verify the decrypted private/public key
+  pair locally, verify or idempotently register the same public key with the backend, then encrypt
+  the restored private key under the current account password before writing IndexedDB. An existing
+  local identity is replaced only after explicit confirmation.
 - Wrap the existing 32-byte workspace key directly with the recipient's RSA-OAEP public key. The standard OAEP label binds format version, workspace ID, recipient user ID, and recipient key version.
 - Unwrap key shares only in the recipient browser, then protect the recovered workspace key with that recipient's independently chosen local workspace unlock password.
 
 The package envelope is intentionally transport-independent. The frontend maps its `ciphertext` and `nonce` fields into the API's `encryptedContent` and `contentNonce` fields and supplies the fixed version 1 key identifier in `encryptionMetadata.keyId`; local IndexedDB records retain the package envelope directly.
 
-The workspace unlock password is separate from the account password and is never stored or sent to the backend. It derives only a local wrapping key; it is not used directly as note key material. The account password is also used locally to protect the user's identity private key after normal authentication, but neither the plaintext private key nor its protected local envelope is uploaded. There is no identity-key recovery, parameter migration, device transfer, key rotation, or cryptographic revocation. Losing the relevant password or browser profile can make server ciphertext unavailable to this client.
+The workspace unlock password is separate from the account password and is never stored or sent to the backend. It derives only a local wrapping key; it is not used directly as note key material. The account password is also used locally to protect the user's identity private key after normal authentication, but neither the plaintext private key nor its protected local envelope is uploaded. Manual device transfer is available through the encrypted recovery kit; the kit is never uploaded and contains no workspace key or content. There is no automatic pairing, identity replacement, parameter migration, key rotation, or cryptographic revocation. Losing the identity, recovery kit/passphrase, or a workspace password/local-only data can still make ciphertext unavailable.
 
 ## Database Schema Plan
 
@@ -229,6 +238,11 @@ Add indexes for workspace membership lookup, note listing by workspace, version 
 - `conflicts`: encrypted local and remote snapshots created by push or pull conflict detection, plus durable resolution status, action, timestamp, encrypted selected payload, and replacement pending-operation ID.
 - `workspace_keys`: one user/workspace-scoped protected-key envelope containing only ciphertext, KDF parameters, salt, nonce, and authenticated format metadata.
 - `user_crypto_identities`: one user-scoped public identity plus an AES-GCM-encrypted PKCS8 private-key envelope. No plaintext private key is persisted.
+
+Recovery kits are explicit user exports, not an IndexedDB table or server record. The UI holds a
+generated/imported kit only in component memory while the account/security page is mounted. Export
+selects only identity material and metadata; it cannot include note/comment records, workspace keys,
+passwords, or tokens because those are outside the crypto function input and serialized schema.
 
 Create/edit content is encrypted with a fresh nonce before note mutations and pending queue records share one IndexedDB transaction. Client-created notes use `crypto.randomUUID()` so their IDs remain stable before any server contact. Each mutation increments a per-note `local_revision`. Repeated pending edits are coalesced into one `update_note` record with the latest encrypted envelope, while create and delete operations remain explicit. A deleted note is retained as a tombstone and filtered from the normal local list.
 
@@ -283,3 +297,9 @@ Sensitive local storage rules:
 - Require owner-authorized public-key lookup and atomically create membership plus its first active key share. Permit an owner to repair a missing share for a legacy membership without replacing the workspace key.
 - Refuse client-side key initialization unless the backend confirms the workspace has one owner, no encrypted notes, and no active key shares. Existing or shared workspaces without a local key must receive a share rather than silently generate a new key.
 - Treat member removal as authorization revocation only. Mark the server key-share record revoked, but do not claim that prior ciphertext, plaintext, or keys are erased from a former member's device.
+- Treat recovery as portable encrypted identity backup, not server escrow. Keep the recovery format
+  strict and versioned, authenticate its public metadata, reject wrong-account/malformed/tampered
+  input, and verify the registered public key before changing local identity storage.
+- Do not silently generate a replacement identity when browser data is missing. Existing shares are
+  bound to the registered key; versioned identity replacement and workspace re-sharing remain future
+  migration work.

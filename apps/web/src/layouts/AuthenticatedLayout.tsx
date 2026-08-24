@@ -38,9 +38,13 @@ export function AuthenticatedLayout() {
             </Link>
             <nav aria-label="Primary navigation">
               <NavLink to="/workspaces">Workspaces</NavLink>
+              <NavLink to="/account/security/recovery">Security</NavLink>
             </nav>
             <div className="account-menu">
               <span title={user.email}>{user.email}</span>
+              <Link className="button button--quiet account-security-link" to="/account/security/recovery">
+                Security
+              </Link>
               <button
                 className="button button--quiet"
                 disabled={isLoggingOut}

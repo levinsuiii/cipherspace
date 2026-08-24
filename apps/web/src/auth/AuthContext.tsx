@@ -12,6 +12,7 @@ interface AuthContextValue {
   ensureIdentity: (accountPassword: string) => Promise<void>;
   error: Error | null;
   identityError: Error | null;
+  identityRestored: () => void;
   isLoading: boolean;
   login: (credentials: Credentials) => Promise<void>;
   logout: () => Promise<void>;
@@ -77,6 +78,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         },
         error: authQuery.error,
         identityError,
+        identityRestored: () => setIdentityError(null),
         isLoading: authQuery.isLoading,
         login: (credentials) => establishSession(() => api.auth.login(credentials), credentials.password),
         logout: async () => {

@@ -19,7 +19,7 @@ The first protocol is implemented:
 - The workspace UI can create or unlock a stable, locally protected workspace key and invoke the sync engine manually.
 - Manual sync reports `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`; live pending and conflict counts update after sync and resolution transitions.
 
-Automatic merging, identity/device transfer, recovery, rotation, cryptographic revocation, and automatic background sync remain deferred. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. Create/edit UI requires an unlocked `CryptoKey`, encrypts through `@cipherspace/crypto` before IndexedDB persistence, and never gives the sync engine a plaintext draft or raw workspace key.
+Automatic merging, automated device pairing, identity replacement, rotation, cryptographic revocation, and automatic background sync remain deferred. Manual encrypted identity transfer through a recovery kit is implemented outside the sync protocol. Encrypted note comments are implemented through separate online endpoints and do not participate in this protocol. Create/edit UI requires an unlocked `CryptoKey`, encrypts through `@cipherspace/crypto` before IndexedDB persistence, and never gives the sync engine a plaintext draft or raw workspace key.
 
 ## Goals
 
@@ -211,7 +211,7 @@ The v1 key provider creates one random AES-256-GCM workspace key and immediately
 
 For another member, the owner's unlocked client RSA-OAEP-wraps that same workspace key with the member's registered RSA-3072/SHA-256 public identity. The backend stores only the recipient-specific ciphertext and key/version metadata. The recipient unlocks their AES-GCM-protected identity private key locally with their account password, unwraps the share, and protects the recovered workspace key under their own local workspace password. The account password is not used as note key material, the owner's local password is never shared, and no plaintext workspace or private identity key is sent to the backend.
 
-After reload, the workspace is `locked` and each user enters their own local workspace password. Identity/device transfer, recovery, key rotation, and cryptographic revocation are explicitly absent. This provisioning step does not alter note sync envelope or cursor semantics.
+After reload, the workspace is `locked` and each user enters their own local workspace password. If browser data is lost, a user can import a previously exported encrypted recovery kit, retrieve their existing server-held workspace key share, and choose a new local workspace password. The kit contains the identity private key ciphertext rather than workspace keys and does not alter note sync envelope or cursor semantics. Automated pairing, identity replacement, key rotation, and cryptographic revocation remain absent.
 
 ## Delete Semantics
 
@@ -223,7 +223,7 @@ Deletes are server tombstones. An accepted delete records the current base versi
 - CRDTs or Operational Transform.
 - WebSockets, real-time collaboration, or push notifications.
 - Background/service-worker sync.
-- Identity/device transfer, recovery, key rotation, or cryptographic revocation.
+- Automated device pairing, identity replacement, key rotation, or cryptographic revocation.
 - Offline comment persistence, comment sync, or comment conflicts.
 - Version restore.
 

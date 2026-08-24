@@ -4,6 +4,7 @@ import { ProtectedRoute, PublicOnlyRoute } from "./components/RouteGuards";
 import { AuthenticatedLayout } from "./layouts/AuthenticatedLayout";
 import { WorkspaceLayout } from "./layouts/WorkspaceLayout";
 import { AuthPage } from "./pages/AuthPage";
+import { AccountRecoveryPage } from "./pages/AccountRecoveryPage";
 import { ConflictResolutionPage } from "./pages/ConflictResolutionPage";
 import { NoteDetailPage } from "./pages/NoteDetailPage";
 import { NotesPage } from "./pages/NotesPage";
@@ -21,6 +22,7 @@ export function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AuthenticatedLayout />}>
           <Route path="/workspaces" element={<WorkspacesPage />} />
+          <Route path="/account/security/recovery" element={<AccountRecoveryPage />} />
           <Route path="/workspaces/:workspaceId" element={<WorkspaceLayout />}>
             <Route index element={<WorkspaceOverviewPage />} />
             <Route path="notes" element={<NotesPage />} />

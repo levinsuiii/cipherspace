@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, recipient-specific end-to-end encrypted workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, local workspace lock/unlock, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Recovery, rotation, cryptographic revocation, automatic merging, and offline comment sync remain separate future work.
+CipherSpace now has a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, recipient-specific end-to-end encrypted workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, local workspace lock/unlock, encrypted identity recovery-kit export/import, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Automated device pairing, identity replacement, rotation, cryptographic revocation, automatic merging, and offline comment sync remain separate future work.
 
 ## Current Status
 
@@ -32,6 +32,18 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - Authentication creates or reuses a versioned RSA-OAEP user identity. Only the SPKI public key is registered; the PKCS8 private key is AES-GCM encrypted in IndexedDB with a PBKDF2 key derived locally from the account password.
 - Owners fetch an existing user's registered public key, wrap the already-unlocked workspace AES key with RSA-OAEP, and atomically upload the ciphertext while adding membership. The API stores no plaintext workspace or identity private key.
 - A recipient retrieves only their active share, unlocks their client-only identity private key, unwraps the same logical workspace key, and protects it with their own independent local workspace password before using the normal lock/unlock flow.
+- The Account / Security recovery page reports whether the private crypto identity exists in the
+  current browser. It exports a strict version 1 JSON kit containing public identity metadata and
+  the PKCS8 private key encrypted under a separate recovery passphrase, as either a download or
+  copyable text. It never serializes workspace keys, notes, comments, passwords, or auth tokens.
+- A logged-in user can import that kit on a new browser/device. Import validates the strict schema
+  and account ID, decrypts and verifies the key pair locally, compares the public key with the
+  backend identity (or registers it if absent), re-protects the private key with the current account
+  password, and then stores it in user-scoped IndexedDB. Existing local identity records require an
+  explicit overwrite confirmation.
+- Missing-identity/new-device UI directs users to recovery import and warns that a new unrelated
+  identity cannot open existing shares. Replacement identity plus member re-sharing is not exposed
+  because the backend and crypto format do not yet support a versioned identity migration.
 - Legacy memberships expose `missing` key-share status and can be repaired by an owner. A missing local key cannot initialize an existing/shared workspace; initialization is allowed only for a new empty one-owner workspace.
 - An explicit **Sync** action pushes pending encrypted operations, pulls remote events from the durable cursor, and exposes `idle`, `syncing`, `synced`, `conflict`, `failed`, or `locked`. Dexie live queries update unsynced and conflict counts after sync or resolution state transitions.
 - The last verified non-secret user profile is cached to select the correct local data scope during a network outage; online requests still require the backend's HTTP-only session and authorization.
@@ -78,7 +90,7 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces, encrypts and decrypts UTF-8 note content with 128-bit authentication tags, and serializes strict version 1 envelopes as canonical base64.
 - Fixed envelope metadata is authenticated as AES-GCM additional data. Runtime validation rejects missing or extra fields, unsupported algorithms or versions, malformed base64, incorrect nonce lengths, oversized ciphertext, tampering, and wrong keys without returning plaintext.
 - Raw 32-byte workspace keys can be exported and imported for wrapping. The v1 local flow protects them with PBKDF2-HMAC-SHA-256 (random 128-bit salt, 600,000 iterations) and AES-256-GCM before IndexedDB persistence; unwrapped keys remain in memory only.
-- RSA-OAEP-3072/SHA-256 member wrapping and local recipient setup are implemented. Recovery, parameter migration, key rotation, identity/device transfer, and cryptographic revocation are not.
+- RSA-OAEP-3072/SHA-256 member wrapping, local recipient setup, and manual encrypted identity transfer through recovery kits are implemented. Automatic device pairing, identity replacement, parameter migration, key rotation, and cryptographic revocation are not.
 - Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, protected-key round trips, wrong password/context, wrong-key and ciphertext-authentication failures, and malformed payloads.
 - Migration `0006_encrypted_comments.sql` adds note-scoped encrypted comments, optional same-note parent links, role-safe content lifecycle constraints, and indexes for ordered discussion reads.
 - Migration `0007_workspace_key_sharing.sql` adds versioned public user identities and recipient-specific workspace key shares with sender/recipient version metadata and revocation timestamps.
@@ -115,7 +127,8 @@ Deferred until after the current collaboration slice:
 - Offline comment persistence and sync.
 - Rich-text editing beyond a simple structured document or Markdown field.
 - Advanced sharing permissions.
-- Recovery flows beyond a clearly documented password-reset limitation.
+- Recovery beyond the manual encrypted identity kit, including password reset, automatic device
+  pairing, and versioned identity replacement/re-sharing.
 
 ## Non-Goals For v1
 
@@ -151,7 +164,7 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 1. Scaffold TypeScript workspace with frontend, backend, shared package, linting, formatting, and test commands. Frontend, backend, and crypto workspaces and tests are complete; a shared package, linting, and formatting remain.
 2. Define shared domain types and validation schemas for users, workspaces, members, notes, versions, sync operations, and conflicts.
 3. Build local IndexedDB persistence for notes, versions, pending operations, and workspace key material references. Complete, including user/workspace-scoped protected-key envelopes; raw keys are not persisted.
-4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, envelope formats, local password protection, RSA-OAEP user identities, and member key sharing. Complete for v1; device transfer and recovery remain separate.
+4. Implement client crypto helpers using Web Crypto API, including key generation, AES-GCM encryption, nonce handling, envelope formats, local password protection, RSA-OAEP user identities, member key sharing, and encrypted identity recovery kits. Complete for v1; automatic device pairing and identity replacement remain separate.
 5. Add backend authentication and session management with password hashing. Complete for registration, login, current-user lookup, and current-session logout.
 6. Add database schema and migrations for users, workspaces, memberships, invitations, encrypted notes, versions, devices, and sync cursors. The core backend tables are complete; invitations, devices, and sync cursors remain deferred.
 7. Implement workspace creation and member invitation APIs. Workspace creation and atomic membership plus encrypted-key sharing for existing users are complete; pending invitations and email delivery remain deferred.
@@ -169,7 +182,7 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 
 - Initial authentication still requires the API. After a user has been verified once, the cached profile can reopen that user's local workspace/note data during an outage; this does not establish server authorization.
 - Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
-- Workspace lock removes the unwrapped key from memory and hides readable note UI state. Backgrounding or hiding the app locks immediately, but there is no inactivity timeout while the app stays visible, recovery, hardware-backed key storage, or local ciphertext cleanup on logout.
+- Workspace lock removes the unwrapped key from memory and hides readable note UI state. Backgrounding or hiding the app locks immediately, but there is no inactivity timeout while the app stays visible, hardware-backed key storage, or local ciphertext cleanup on logout. Recovery kits restore the identity used to retrieve server-held shares, not currently unlocked workspace keys or unsynced local-only data.
 - PWA installation requires a secure context in deployment. Provider/browser install UI and cross-site-cookie behavior vary, and the service worker offers static-shell navigation fallback rather than background sync or offline comments.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, breached-password check, MFA, multi-session listing/revocation, or automatic expired-session cleanup. Rate limiting is per-process memory rather than a shared distributed store.
@@ -178,8 +191,8 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Authorization is implemented for workspace, membership, note, note-version, comment, and sync endpoints. Non-members receive workspace-not-found responses.
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
-- A recipient can provision the same workspace key only on a browser profile that has their matching identity private key. Identity-key transfer, recovery, multi-device account recovery, parameter migration, rotation, revocation, and cryptographic deletion are absent.
-- Losing the account password that protects the local identity, the local workspace password, or the browser profile can make ciphertext unrecoverable on that client. A newly generated identity cannot decrypt shares made for the lost key.
+- A recipient can provision the same workspace key on another browser after importing a matching encrypted recovery kit. Automatic pairing, server escrow, account-password recovery, identity replacement, parameter migration, rotation, revocation, and cryptographic deletion are absent.
+- Losing the account password, local workspace password, both the private identity and usable recovery kit, or unsynced browser data can still make ciphertext/data unrecoverable. A newly generated identity cannot decrypt shares made for the lost key.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
 - Server change events and idempotency outcomes are durable. Pull cursors and conflict records are device-local in IndexedDB rather than server cursor/conflict tables.
@@ -187,6 +200,6 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Comment bodies are encrypted before transport, but comment IDs, note/workspace links, authors, parent links, timestamps, deletion state, ciphertext sizes, and discussion activity remain server-visible metadata. Comments are not cached in IndexedDB and cannot be created or read offline.
 - Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds conflict-resolution metadata; version 5 adds encrypted local/resolved payload fields; version 6 adds protected user identity records. Legacy plaintext note, queue, and conflict payloads are encrypted and cleared lazily after a successful workspace unlock because a Dexie schema upgrade cannot access the in-memory workspace key.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
-- Authentication, local encryption, identity generation, wrapping/unwrapping, wrong-key failure, note/comment decryption, public-key APIs, key-share authorization, and role regressions have automated coverage. The design has not received an independent security or cryptographic review.
+- Authentication, local encryption, identity generation, recovery export/import, wrong-passphrase and malformed-kit failure, non-overwrite behavior, recovered-identity workspace-share decryption, wrapping/unwrapping, note/comment decryption, public-key APIs, key-share authorization, and role regressions have automated coverage. The design has not received an independent security or cryptographic review.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

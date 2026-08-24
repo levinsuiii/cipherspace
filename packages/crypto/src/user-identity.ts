@@ -109,6 +109,38 @@ async function deriveProtectionKey(
   }
 }
 
+async function verifyIdentityKeyPair(
+  privateKey: CryptoKey,
+  identity: PublicUserCryptoIdentity
+): Promise<void> {
+  const publicKey = await importPublicKey(identity);
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  let decrypted: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    const encrypted = await crypto.subtle.encrypt(
+      { label: textEncoder.encode("cipherspace.identity-key-check|1"), name: RSA_ALGORITHM },
+      publicKey,
+      challenge
+    );
+    decrypted = new Uint8Array(
+      await crypto.subtle.decrypt(
+        { label: textEncoder.encode("cipherspace.identity-key-check|1"), name: RSA_ALGORITHM },
+        privateKey,
+        encrypted
+      )
+    );
+    if (
+      decrypted.length !== challenge.length ||
+      decrypted.some((byte, index) => byte !== challenge[index])
+    ) {
+      throw new Error("Identity key pair mismatch.");
+    }
+  } finally {
+    challenge.fill(0);
+    decrypted?.fill(0);
+  }
+}
+
 async function importPublicKey(identity: PublicUserCryptoIdentity): Promise<CryptoKey> {
   if (
     identity.algorithm !== USER_IDENTITY_ALGORITHM ||
@@ -203,6 +235,116 @@ function validateProtectedPrivateKey(value: unknown): {
   return { ciphertext, nonce, salt };
 }
 
+export async function protectUserPrivateKeyBytes(
+  privateBytes: Uint8Array<ArrayBuffer>,
+  passphrase: string,
+  context: UserIdentityProtectionContext
+): Promise<ProtectedUserPrivateKey> {
+  assertPassphrase(passphrase);
+  assertIdentityContext(context);
+  if (privateBytes.byteLength === 0 || privateBytes.byteLength > MAX_PRIVATE_KEY_CIPHERTEXT_BYTES) {
+    throw new CipherSpaceCryptoError(
+      "invalid_protected_identity_key",
+      "The identity private key has an invalid length."
+    );
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH_BYTES));
+  const nonce = crypto.getRandomValues(new Uint8Array(AES_GCM_NONCE_LENGTH_BYTES));
+  try {
+    const protectionKey = await deriveProtectionKey(passphrase, salt);
+    const ciphertext = await crypto.subtle.encrypt(
+      {
+        additionalData: identityProtectionData(context),
+        iv: nonce,
+        name: NOTE_ENCRYPTION_ALGORITHM,
+        tagLength: AES_GCM_TAG_LENGTH_BITS
+      },
+      protectionKey,
+      privateBytes
+    );
+    return {
+      algorithm: NOTE_ENCRYPTION_ALGORITHM,
+      ciphertext: encodeBase64(new Uint8Array(ciphertext)),
+      identityAlgorithm: USER_IDENTITY_ALGORITHM,
+      identityKeyVersion: USER_IDENTITY_KEY_VERSION,
+      iterations: KDF_ITERATIONS,
+      kdf: KDF_ALGORITHM,
+      kdfHash: KDF_HASH,
+      nonce: encodeBase64(nonce),
+      salt: encodeBase64(salt),
+      version: PROTECTION_VERSION
+    };
+  } catch (error) {
+    if (error instanceof CipherSpaceCryptoError) throw error;
+    throw new CipherSpaceCryptoError(
+      "identity_key_protection_failed",
+      "User encryption identity protection failed.",
+      { cause: error }
+    );
+  }
+}
+
+export async function verifyUserIdentityPrivateKeyBytes(
+  privateBytes: Uint8Array<ArrayBuffer>,
+  identity: PublicUserCryptoIdentity
+): Promise<void> {
+  try {
+    const privateKey = await crypto.subtle.importKey(
+      "pkcs8",
+      privateBytes,
+      { hash: RSA_HASH, name: RSA_ALGORITHM },
+      false,
+      ["decrypt", "unwrapKey"]
+    );
+    await verifyIdentityKeyPair(privateKey, identity);
+  } catch (error) {
+    throw new CipherSpaceCryptoError(
+      "identity_key_unlock_failed",
+      "The identity private key does not match its public key.",
+      { cause: error }
+    );
+  }
+}
+
+export async function decryptProtectedUserPrivateKeyBytes(
+  identity: LocalUserCryptoIdentity,
+  passphrase: string,
+  context: UserIdentityProtectionContext
+): Promise<Uint8Array<ArrayBuffer>> {
+  assertPassphrase(passphrase);
+  assertIdentityContext(context);
+  const { ciphertext, nonce, salt } = validateProtectedPrivateKey(identity.protectedPrivateKey);
+  let privateBytes: Uint8Array<ArrayBuffer> | undefined;
+  try {
+    const protectionKey = await deriveProtectionKey(passphrase, salt);
+    privateBytes = new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          additionalData: identityProtectionData(context),
+          iv: nonce,
+          name: NOTE_ENCRYPTION_ALGORITHM,
+          tagLength: AES_GCM_TAG_LENGTH_BITS
+        },
+        protectionKey,
+        ciphertext
+      )
+    );
+    await verifyUserIdentityPrivateKeyBytes(privateBytes, identity);
+    return privateBytes;
+  } catch (error) {
+    privateBytes?.fill(0);
+    throw new CipherSpaceCryptoError(
+      "identity_key_unlock_failed",
+      "The local encryption identity could not be unlocked.",
+      { cause: error }
+    );
+  } finally {
+    ciphertext.fill(0);
+    nonce.fill(0);
+    salt.fill(0);
+  }
+}
+
 export async function createUserCryptoIdentity(
   passphrase: string,
   context: UserIdentityProtectionContext
@@ -226,31 +368,7 @@ export async function createUserCryptoIdentity(
       crypto.subtle.exportKey("pkcs8", pair.privateKey)
     ]);
     privateBytes = new Uint8Array(privateBuffer);
-    const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH_BYTES));
-    const nonce = crypto.getRandomValues(new Uint8Array(AES_GCM_NONCE_LENGTH_BYTES));
-    const protectionKey = await deriveProtectionKey(passphrase, salt);
-    const ciphertext = await crypto.subtle.encrypt(
-      {
-        additionalData: identityProtectionData(context),
-        iv: nonce,
-        name: NOTE_ENCRYPTION_ALGORITHM,
-        tagLength: AES_GCM_TAG_LENGTH_BITS
-      },
-      protectionKey,
-      privateBytes
-    );
-    const protectedPrivateKey: ProtectedUserPrivateKey = {
-      algorithm: NOTE_ENCRYPTION_ALGORITHM,
-      ciphertext: encodeBase64(new Uint8Array(ciphertext)),
-      identityAlgorithm: USER_IDENTITY_ALGORITHM,
-      identityKeyVersion: USER_IDENTITY_KEY_VERSION,
-      iterations: KDF_ITERATIONS,
-      kdf: KDF_ALGORITHM,
-      kdfHash: KDF_HASH,
-      nonce: encodeBase64(nonce),
-      salt: encodeBase64(salt),
-      version: PROTECTION_VERSION
-    };
+    const protectedPrivateKey = await protectUserPrivateKeyBytes(privateBytes, passphrase, context);
     return {
       algorithm: USER_IDENTITY_ALGORITHM,
       keyVersion: USER_IDENTITY_KEY_VERSION,
@@ -276,22 +394,9 @@ export async function unlockUserCryptoIdentity(
 ): Promise<CryptoKey> {
   assertPassphrase(passphrase);
   assertIdentityContext(context);
-  const { ciphertext, nonce, salt } = validateProtectedPrivateKey(identity.protectedPrivateKey);
   let privateBytes: Uint8Array<ArrayBuffer> | undefined;
   try {
-    const protectionKey = await deriveProtectionKey(passphrase, salt);
-    privateBytes = new Uint8Array(
-      await crypto.subtle.decrypt(
-        {
-          additionalData: identityProtectionData(context),
-          iv: nonce,
-          name: NOTE_ENCRYPTION_ALGORITHM,
-          tagLength: AES_GCM_TAG_LENGTH_BITS
-        },
-        protectionKey,
-        ciphertext
-      )
-    );
+    privateBytes = await decryptProtectedUserPrivateKeyBytes(identity, passphrase, context);
     const privateKey = await crypto.subtle.importKey(
       "pkcs8",
       privateBytes,
@@ -299,25 +404,6 @@ export async function unlockUserCryptoIdentity(
       false,
       ["decrypt", "unwrapKey"]
     );
-    const publicKey = await importPublicKey(identity);
-    const challenge = crypto.getRandomValues(new Uint8Array(32));
-    const encrypted = await crypto.subtle.encrypt(
-      { label: textEncoder.encode("cipherspace.identity-key-check|1"), name: RSA_ALGORITHM },
-      publicKey,
-      challenge
-    );
-    const decrypted = new Uint8Array(
-      await crypto.subtle.decrypt(
-        { label: textEncoder.encode("cipherspace.identity-key-check|1"), name: RSA_ALGORITHM },
-        privateKey,
-        encrypted
-      )
-    );
-    if (decrypted.length !== challenge.length || decrypted.some((byte, index) => byte !== challenge[index])) {
-      throw new Error("Identity key pair mismatch.");
-    }
-    challenge.fill(0);
-    decrypted.fill(0);
     return privateKey;
   } catch (error) {
     throw new CipherSpaceCryptoError(
@@ -327,9 +413,6 @@ export async function unlockUserCryptoIdentity(
     );
   } finally {
     privateBytes?.fill(0);
-    ciphertext.fill(0);
-    nonce.fill(0);
-    salt.fill(0);
   }
 }
 

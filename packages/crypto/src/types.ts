@@ -3,6 +3,7 @@ import {
   NOTE_ENVELOPE_VERSION,
   USER_IDENTITY_ALGORITHM,
   USER_IDENTITY_KEY_VERSION,
+  RECOVERY_KIT_VERSION,
   WORKSPACE_KEY_VERSION
 } from "./constants.js";
 
@@ -31,6 +32,7 @@ export type CryptoErrorCode =
   | "invalid_exported_key"
   | "invalid_key"
   | "invalid_protected_identity_key"
+  | "invalid_recovery_kit"
   | "invalid_public_identity_key"
   | "invalid_unlock_passphrase"
   | "invalid_payload"
@@ -40,6 +42,8 @@ export type CryptoErrorCode =
   | "identity_key_generation_failed"
   | "identity_key_protection_failed"
   | "identity_key_unlock_failed"
+  | "recovery_kit_decryption_failed"
+  | "recovery_kit_encryption_failed"
   | "workspace_key_share_failed"
   | "workspace_key_share_unlock_failed"
   | "workspace_key_protection_failed"
@@ -75,6 +79,37 @@ export interface ProtectedUserPrivateKey {
 
 export interface LocalUserCryptoIdentity extends PublicUserCryptoIdentity {
   protectedPrivateKey: ProtectedUserPrivateKey;
+}
+
+export interface EncryptedUserRecoveryKit {
+  created_at: string;
+  encrypted_private_key: {
+    algorithm: "AES-GCM";
+    ciphertext: string;
+    format: "PKCS8";
+    iterations: 600000;
+    kdf: "PBKDF2";
+    kdf_hash: "SHA-256";
+    nonce: string;
+    salt: string;
+  };
+  identity: {
+    algorithm: typeof USER_IDENTITY_ALGORITHM;
+    created_at: string;
+    key_version: typeof USER_IDENTITY_KEY_VERSION;
+    public_key: string;
+  };
+  recovery_kit_version: typeof RECOVERY_KIT_VERSION;
+  user_id: string;
+}
+
+export interface UserRecoveryKitContext {
+  userId: string;
+}
+
+export interface UserRecoveryKitExportContext extends UserRecoveryKitContext {
+  createdAt?: string;
+  identityCreatedAt: string;
 }
 
 export interface WorkspaceKeyShareContext {

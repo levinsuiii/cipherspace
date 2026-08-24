@@ -3,6 +3,7 @@ export const NOTE_ENVELOPE_VERSION = 1 as const;
 export const WORKSPACE_KEY_VERSION = 1 as const;
 export const USER_IDENTITY_ALGORITHM = "RSA-OAEP-3072-SHA256" as const;
 export const USER_IDENTITY_KEY_VERSION = 1 as const;
+export const RECOVERY_KIT_VERSION = 1 as const;
 
 export const AES_KEY_LENGTH_BITS = 256;
 export const AES_GCM_NONCE_LENGTH_BYTES = 12;
