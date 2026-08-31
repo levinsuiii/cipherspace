@@ -8,9 +8,13 @@ import type {
 } from "../api/types";
 import type { EncryptedNotePayload } from "@cipherspace/crypto";
 import type { CipherSpaceLocalDatabase } from "./database";
-import { encryptLocalNotePayload } from "./notePayloadCrypto";
+import {
+  decryptLocalNotePayload,
+  encryptLocalNotePayload
+} from "./notePayloadCrypto";
 import type {
   ConflictResolutionInput,
+  LegacyPlaintextInspection,
   LocalConflict,
   LocalNote,
   LocalNotePayload,
@@ -40,6 +44,36 @@ function isOutstandingChange(change: PendingChange): boolean {
 
 function samePayload(left: LocalNotePayload | null, right: LocalNotePayload): boolean {
   return left?.body === right.body && left.title === right.title;
+}
+
+function hasLegacyPlaintext(value: unknown): boolean {
+  return value !== null && value !== undefined;
+}
+
+function parseLegacyPayload(value: unknown): LocalNotePayload {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== "body,title" ||
+    typeof (value as Record<string, unknown>).body !== "string" ||
+    typeof (value as Record<string, unknown>).title !== "string"
+  ) {
+    throw new LegacyPlaintextMigrationError(
+      "Legacy local data has an unsupported plaintext shape and was not changed."
+    );
+  }
+  return {
+    body: (value as { body: string }).body,
+    title: (value as { title: string }).title
+  };
+}
+
+export class LegacyPlaintextMigrationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = "LegacyPlaintextMigrationError";
+  }
 }
 
 export class LocalNotesRepository {
@@ -239,6 +273,40 @@ export class LocalNotesRepository {
       .sort((left, right) => right.updated_at.localeCompare(left.updated_at));
   }
 
+  public async inspectLegacyPlaintextWorkspace(
+    workspaceId: string
+  ): Promise<LegacyPlaintextInspection> {
+    const [notes, changes, conflicts] = await Promise.all([
+      this.database.notes
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray(),
+      this.database.pending_changes
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray(),
+      this.database.conflicts
+        .where("[user_id+workspace_id]")
+        .equals([this.userId, workspaceId])
+        .toArray()
+    ]);
+    const inspection = {
+      conflicts: conflicts.filter(
+        (conflict) =>
+          hasLegacyPlaintext(conflict.local_note_payload) ||
+          hasLegacyPlaintext(conflict.resolved_note_payload)
+      ).length,
+      notes: notes.filter((note) => hasLegacyPlaintext(note.local_note_payload)).length,
+      pendingChanges: changes.filter((change) =>
+        hasLegacyPlaintext(change.local_note_payload)
+      ).length,
+      totalRecords: 0
+    };
+    inspection.totalRecords =
+      inspection.notes + inspection.pendingChanges + inspection.conflicts;
+    return inspection;
+  }
+
   public async migratePlaintextWorkspace(
     workspaceId: string,
     workspaceKey: CryptoKey
@@ -258,40 +326,72 @@ export class LocalNotesRepository {
         .toArray()
     ]);
 
+    const prepareEnvelope = async (
+      value: unknown,
+      existing: EncryptedNotePayload | null
+    ): Promise<{ encrypted: EncryptedNotePayload; payload: LocalNotePayload }> => {
+      const payload = parseLegacyPayload(value);
+      if (!existing) {
+        return { encrypted: await encryptLocalNotePayload(payload, workspaceKey), payload };
+      }
+      let decrypted: LocalNotePayload;
+      try {
+        decrypted = await decryptLocalNotePayload(existing, workspaceKey);
+      } catch {
+        throw new LegacyPlaintextMigrationError(
+          "A legacy record has an encrypted envelope that cannot be verified with this workspace key. Nothing was changed."
+        );
+      }
+      if (!samePayload(decrypted, payload)) {
+        throw new LegacyPlaintextMigrationError(
+          "A legacy record does not match its encrypted envelope. Nothing was changed."
+        );
+      }
+      return { encrypted: existing, payload };
+    };
+
     const notePlans = await Promise.all(
-      notes.filter((note) => note.local_note_payload).map(async (note) => ({
-        encrypted: note.local_encrypted_payload ??
-          await encryptLocalNotePayload(note.local_note_payload!, workspaceKey),
+      notes.filter((note) => hasLegacyPlaintext(note.local_note_payload)).map(async (note) => ({
+        ...(await prepareEnvelope(note.local_note_payload, note.local_encrypted_payload)),
         key: note.key,
-        payload: note.local_note_payload!,
         revision: note.local_revision
       }))
     );
     const changePlans = await Promise.all(
-      changes.filter((change) => change.local_note_payload).map(async (change) => ({
-        encrypted: change.encrypted_payload ??
-          await encryptLocalNotePayload(change.local_note_payload!, workspaceKey),
-        id: change.id,
-        payload: change.local_note_payload!,
-        revision: change.local_revision
-      }))
+      changes.filter((change) => hasLegacyPlaintext(change.local_note_payload)).map(
+        async (change) => ({
+          ...(await prepareEnvelope(change.local_note_payload, change.encrypted_payload)),
+          id: change.id,
+          revision: change.local_revision
+        })
+      )
     );
     const conflictPlans = await Promise.all(
       conflicts.filter(
-        (conflict) => conflict.local_note_payload || conflict.resolved_note_payload
-      ).map(async (conflict) => ({
-        key: conflict.key,
-        localEncrypted: conflict.local_note_payload
-          ? conflict.local_encrypted_payload ??
-            await encryptLocalNotePayload(conflict.local_note_payload, workspaceKey)
-          : conflict.local_encrypted_payload,
-        localPayload: conflict.local_note_payload,
-        resolvedEncrypted: conflict.resolved_note_payload
-          ? conflict.resolved_encrypted_payload ??
-            await encryptLocalNotePayload(conflict.resolved_note_payload, workspaceKey)
-          : conflict.resolved_encrypted_payload,
-        resolvedPayload: conflict.resolved_note_payload
-      }))
+        (conflict) =>
+          hasLegacyPlaintext(conflict.local_note_payload) ||
+          hasLegacyPlaintext(conflict.resolved_note_payload)
+      ).map(async (conflict) => {
+        const local = hasLegacyPlaintext(conflict.local_note_payload)
+          ? await prepareEnvelope(
+              conflict.local_note_payload,
+              conflict.local_encrypted_payload
+            )
+          : null;
+        const resolved = hasLegacyPlaintext(conflict.resolved_note_payload)
+          ? await prepareEnvelope(
+              conflict.resolved_note_payload,
+              conflict.resolved_encrypted_payload
+            )
+          : null;
+        return {
+          key: conflict.key,
+          localEncrypted: local?.encrypted ?? conflict.local_encrypted_payload,
+          localPayload: local?.payload ?? null,
+          resolvedEncrypted: resolved?.encrypted ?? conflict.resolved_encrypted_payload,
+          resolvedPayload: resolved?.payload ?? null
+        };
+      })
     );
 
     let migrated = 0;
@@ -308,7 +408,11 @@ export class LocalNotesRepository {
             current.workspace_id !== workspaceId ||
             current.local_revision !== plan.revision ||
             !samePayload(current.local_note_payload, plan.payload)
-          ) continue;
+          ) {
+            throw new LegacyPlaintextMigrationError(
+              "Legacy local data changed during migration. Nothing was changed; retry the migration."
+            );
+          }
           await this.database.notes.put({
             ...current,
             local_encrypted_payload: current.local_encrypted_payload ?? plan.encrypted,
@@ -323,7 +427,11 @@ export class LocalNotesRepository {
             current.workspace_id !== workspaceId ||
             current.local_revision !== plan.revision ||
             !samePayload(current.local_note_payload, plan.payload)
-          ) continue;
+          ) {
+            throw new LegacyPlaintextMigrationError(
+              "Legacy local data changed during migration. Nothing was changed; retry the migration."
+            );
+          }
           await this.database.pending_changes.put({
             ...current,
             encrypted_payload: current.encrypted_payload ?? plan.encrypted,
@@ -333,14 +441,22 @@ export class LocalNotesRepository {
         }
         for (const plan of conflictPlans) {
           const current = await this.database.conflicts.get(plan.key);
-          if (current?.user_id !== this.userId || current.workspace_id !== workspaceId) continue;
+          if (current?.user_id !== this.userId || current.workspace_id !== workspaceId) {
+            throw new LegacyPlaintextMigrationError(
+              "Legacy local data changed during migration. Nothing was changed; retry the migration."
+            );
+          }
           const localMatches = plan.localPayload
             ? samePayload(current.local_note_payload, plan.localPayload)
-            : current.local_note_payload === null;
+            : !hasLegacyPlaintext(current.local_note_payload);
           const resolvedMatches = plan.resolvedPayload
             ? samePayload(current.resolved_note_payload, plan.resolvedPayload)
-            : current.resolved_note_payload === null;
-          if (!localMatches || !resolvedMatches) continue;
+            : !hasLegacyPlaintext(current.resolved_note_payload);
+          if (!localMatches || !resolvedMatches) {
+            throw new LegacyPlaintextMigrationError(
+              "Legacy local data changed during migration. Nothing was changed; retry the migration."
+            );
+          }
           await this.database.conflicts.put({
             ...current,
             local_encrypted_payload: current.local_encrypted_payload ?? plan.localEncrypted,
@@ -351,9 +467,84 @@ export class LocalNotesRepository {
           });
           migrated += 1;
         }
+
+        const remaining = await this.inspectLegacyPlaintextWorkspace(workspaceId);
+        if (remaining.totalRecords > 0) {
+          throw new LegacyPlaintextMigrationError(
+            "Legacy plaintext verification failed. The migration was rolled back."
+          );
+        }
       }
     );
+    const verified = await this.inspectLegacyPlaintextWorkspace(workspaceId);
+    if (verified.totalRecords > 0) {
+      throw new LegacyPlaintextMigrationError(
+        "Legacy plaintext verification failed. Normal workspace use remains blocked."
+      );
+    }
     return migrated;
+  }
+
+  public async deleteLegacyPlaintextWorkspace(workspaceId: string): Promise<number> {
+    return this.database.transaction(
+      "rw",
+      this.database.notes,
+      this.database.pending_changes,
+      this.database.conflicts,
+      async () => {
+        const [notes, changes, conflicts] = await Promise.all([
+          this.database.notes
+            .where("[user_id+workspace_id]")
+            .equals([this.userId, workspaceId])
+            .toArray(),
+          this.database.pending_changes
+            .where("[user_id+workspace_id]")
+            .equals([this.userId, workspaceId])
+            .toArray(),
+          this.database.conflicts
+            .where("[user_id+workspace_id]")
+            .equals([this.userId, workspaceId])
+            .toArray()
+        ]);
+        const affectedNoteIds = new Set<string>();
+        for (const note of notes) {
+          if (hasLegacyPlaintext(note.local_note_payload)) affectedNoteIds.add(note.id);
+        }
+        for (const change of changes) {
+          if (hasLegacyPlaintext(change.local_note_payload)) affectedNoteIds.add(change.note_id);
+        }
+        for (const conflict of conflicts) {
+          if (
+            hasLegacyPlaintext(conflict.local_note_payload) ||
+            hasLegacyPlaintext(conflict.resolved_note_payload)
+          ) {
+            affectedNoteIds.add(conflict.note_id);
+          }
+        }
+        if (affectedNoteIds.size === 0) return 0;
+
+        const noteKeys = notes
+          .filter((note) => affectedNoteIds.has(note.id))
+          .map((note) => note.key);
+        const changeIds = changes
+          .filter((change) => affectedNoteIds.has(change.note_id))
+          .map((change) => change.id);
+        const conflictKeys = conflicts
+          .filter((conflict) => affectedNoteIds.has(conflict.note_id))
+          .map((conflict) => conflict.key);
+        await Promise.all([
+          this.database.notes.bulkDelete(noteKeys),
+          this.database.pending_changes.bulkDelete(changeIds),
+          this.database.conflicts.bulkDelete(conflictKeys)
+        ]);
+
+        const remaining = await this.inspectLegacyPlaintextWorkspace(workspaceId);
+        if (remaining.totalRecords > 0) {
+          throw new Error("Legacy local records could not be deleted completely.");
+        }
+        return affectedNoteIds.size;
+      }
+    );
   }
 
   public async getLatestVersion(noteId: string): Promise<LocalNoteVersion | undefined> {

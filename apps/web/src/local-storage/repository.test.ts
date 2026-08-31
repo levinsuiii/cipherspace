@@ -2,8 +2,14 @@ import { generateWorkspaceKey } from "@cipherspace/crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CipherSpaceLocalDatabase } from "./database";
-import { decryptLocalNotePayload } from "./notePayloadCrypto";
-import { LocalNotesRepository } from "./repository";
+import {
+  decryptLocalNotePayload,
+  encryptLocalNotePayload
+} from "./notePayloadCrypto";
+import {
+  LegacyPlaintextMigrationError,
+  LocalNotesRepository
+} from "./repository";
 import type { LocalNotePayload } from "./types";
 
 const userId = "00000000-0000-4000-8000-000000000001";
@@ -228,6 +234,143 @@ describe("LocalNotesRepository", () => {
       decryptLocalNotePayload(storedNote!.local_encrypted_payload!, key)
     ).resolves.toEqual(legacyPayload);
     expect(JSON.stringify([storedNote, storedChange])).not.toContain("legacy secret");
+  });
+
+  it("detects legacy plaintext records in notes, pending changes, and conflicts", async () => {
+    const notePayload = { body: "legacy note body", title: "Legacy note" };
+    const note = await repository.createNote(workspaceId, notePayload, encrypted());
+    const pending = (await repository.listPendingChanges(workspaceId))[0]!;
+    await database.notes.update(note.key, { local_note_payload: notePayload });
+    await database.pending_changes.update(pending.id, { local_note_payload: notePayload });
+
+    const conflictPayload = { body: "legacy conflict body", title: "Legacy conflict" };
+    const conflict = await createEditConflict(conflictPayload);
+    await database.conflicts.update(conflict.key, {
+      local_note_payload: conflictPayload,
+      resolved_note_payload: { body: "legacy resolution", title: "Resolved conflict" }
+    });
+
+    database.close();
+    database = new CipherSpaceLocalDatabase(databaseName);
+    repository = new LocalNotesRepository(database, userId);
+
+    await expect(repository.inspectLegacyPlaintextWorkspace(workspaceId)).resolves.toEqual({
+      conflicts: 1,
+      notes: 1,
+      pendingChanges: 1,
+      totalRecords: 3
+    });
+  });
+
+  it("migrates both legacy conflict snapshots and verifies their plaintext fields are cleared", async () => {
+    const localPayload = { body: "legacy local conflict", title: "Local conflict" };
+    const resolvedPayload = { body: "legacy resolved conflict", title: "Resolution" };
+    const conflict = await createEditConflict(localPayload);
+    await database.conflicts.update(conflict.key, {
+      local_encrypted_payload: null,
+      local_note_payload: localPayload,
+      resolved_encrypted_payload: null,
+      resolved_note_payload: resolvedPayload
+    });
+    const key = await generateWorkspaceKey();
+
+    await expect(repository.migratePlaintextWorkspace(workspaceId, key)).resolves.toBe(1);
+
+    const stored = await database.conflicts.get(conflict.key);
+    expect(stored?.local_note_payload).toBeNull();
+    expect(stored?.resolved_note_payload).toBeNull();
+    await expect(
+      decryptLocalNotePayload(stored!.local_encrypted_payload!, key)
+    ).resolves.toEqual(localPayload);
+    await expect(
+      decryptLocalNotePayload(stored!.resolved_encrypted_payload!, key)
+    ).resolves.toEqual(resolvedPayload);
+    expect(JSON.stringify(stored)).not.toContain("legacy local conflict");
+    expect(JSON.stringify(stored)).not.toContain("legacy resolved conflict");
+  });
+
+  it("keeps every legacy record untouched when any migration plan is invalid", async () => {
+    const validPayload = { body: "must remain until retry", title: "Valid legacy note" };
+    const validNote = await repository.createNote(workspaceId, validPayload, encrypted());
+    const invalidNote = await repository.createNote(
+      workspaceId,
+      { body: "invalid record", title: "Invalid legacy note" },
+      encrypted()
+    );
+    await database.notes.update(validNote.key, {
+      local_encrypted_payload: null,
+      local_note_payload: validPayload
+    });
+    await database.notes.update(invalidNote.key, {
+      local_encrypted_payload: null,
+      local_note_payload: "unsupported legacy value" as unknown as LocalNotePayload
+    });
+    const key = await generateWorkspaceKey();
+
+    await expect(repository.migratePlaintextWorkspace(workspaceId, key)).rejects.toBeInstanceOf(
+      LegacyPlaintextMigrationError
+    );
+
+    await expect(database.notes.get(validNote.key)).resolves.toMatchObject({
+      local_encrypted_payload: null,
+      local_note_payload: validPayload
+    });
+    await expect(database.notes.get(invalidNote.key)).resolves.toMatchObject({
+      local_encrypted_payload: null,
+      local_note_payload: "unsupported legacy value"
+    });
+    await expect(repository.inspectLegacyPlaintextWorkspace(workspaceId)).resolves.toMatchObject({
+      notes: 2,
+      totalRecords: 2
+    });
+  });
+
+  it("does not clear plaintext when an existing envelope cannot be verified", async () => {
+    const payload = { body: "preserve this legacy value", title: "Legacy note" };
+    const note = await repository.createNote(workspaceId, payload, encrypted());
+    const encryptionKey = await generateWorkspaceKey();
+    const unlockKey = await generateWorkspaceKey();
+    const undecryptableEnvelope = await encryptLocalNotePayload(payload, encryptionKey);
+    await database.notes.update(note.key, {
+      local_encrypted_payload: undecryptableEnvelope,
+      local_note_payload: payload
+    });
+
+    await expect(repository.migratePlaintextWorkspace(workspaceId, unlockKey)).rejects.toThrow(
+      "cannot be verified"
+    );
+    await expect(database.notes.get(note.key)).resolves.toMatchObject({
+      local_encrypted_payload: undecryptableEnvelope,
+      local_note_payload: payload
+    });
+  });
+
+  it("explicitly deletes all active local records for notes affected by legacy plaintext", async () => {
+    const payload = { body: "delete only after confirmation", title: "Legacy local note" };
+    const note = await repository.createNote(workspaceId, payload, encrypted());
+    const pending = (await repository.listPendingChanges(workspaceId))[0]!;
+    await database.notes.update(note.key, { local_note_payload: payload });
+    await database.pending_changes.update(pending.id, { local_note_payload: payload });
+
+    await expect(repository.deleteLegacyPlaintextWorkspace(workspaceId)).resolves.toBe(1);
+
+    await expect(database.notes.get(note.key)).resolves.toBeUndefined();
+    await expect(database.pending_changes.get(pending.id)).resolves.toBeUndefined();
+    await expect(repository.inspectLegacyPlaintextWorkspace(workspaceId)).resolves.toMatchObject({
+      totalRecords: 0
+    });
+  });
+
+  it("does not retain pending or conflict plaintext during normal encrypted use", async () => {
+    const marker = { body: "normal plaintext marker", title: "Normal encrypted conflict" };
+    const conflict = await createEditConflict(marker);
+    const pending = await database.pending_changes.get(conflict.pending_change_id);
+    const storedConflict = await database.conflicts.get(conflict.key);
+
+    expect(pending?.local_note_payload).toBeNull();
+    expect(storedConflict?.local_note_payload).toBeNull();
+    expect(storedConflict?.resolved_note_payload).toBeNull();
+    expect(JSON.stringify([pending, storedConflict])).not.toContain(marker.body);
   });
 
   it("soft-deletes a note and records a pending delete operation", async () => {

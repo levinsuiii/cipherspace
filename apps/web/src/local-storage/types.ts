@@ -20,6 +20,13 @@ export interface LocalNotePayload {
   title: string;
 }
 
+export interface LegacyPlaintextInspection {
+  conflicts: number;
+  notes: number;
+  pendingChanges: number;
+  totalRecords: number;
+}
+
 export interface LocalWorkspace {
   cached_at: string;
   created_at: string;

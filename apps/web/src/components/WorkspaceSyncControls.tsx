@@ -14,6 +14,7 @@ interface WorkspaceSyncControlsProps {
   conflictCount: number;
   keyStatus: WorkspaceKeyStatus;
   keyAccess: WorkspaceKeyAccess | null;
+  legacyMigrationRequired?: boolean;
   onCreateKey(passphrase: string): Promise<void>;
   onLock(): void;
   onSync(): Promise<SyncSummary>;
@@ -35,6 +36,7 @@ export function WorkspaceSyncControls({
   conflictCount,
   keyStatus,
   keyAccess,
+  legacyMigrationRequired = false,
   onCreateKey,
   onLock,
   onSync,
@@ -68,6 +70,10 @@ export function WorkspaceSyncControls({
     try {
       if (keyStatus === "missing" && keyAccess?.keyShareAvailable) {
         await onSetupShared(identityPassword, passphrase);
+      } else if (keyStatus === "missing" && legacyMigrationRequired) {
+        throw new Error(
+          "The original workspace key is required. CipherSpace will not create a replacement key for legacy local data."
+        );
       } else if (keyStatus === "missing" && keyAccess?.canInitialize) {
         await onCreateKey(passphrase);
       }
@@ -100,12 +106,16 @@ export function WorkspaceSyncControls({
       <div className="sync-panel__status">
         <div>
           <span className={`sync-status sync-status--${visibleStatus}`} role="status">
-            {visibleStatus}
+            {legacyMigrationRequired ? "migration required" : visibleStatus}
           </span>
-          <strong>Encrypted sync</strong>
+          <strong>
+            {legacyMigrationRequired ? "Legacy local-data migration" : "Encrypted sync"}
+          </strong>
         </div>
         <p>
-          {keyStatus === "missing"
+          {legacyMigrationRequired && keyStatus === "unlocked"
+            ? "The original workspace key is unlocked. CipherSpace is verifying and encrypting every legacy local record before workspace access resumes."
+            : keyStatus === "missing"
             ? keyAccess === null
               ? "Checking whether this workspace can be initialized or has a key share…"
               : keyAccess.keyShareAvailable
@@ -176,6 +186,12 @@ export function WorkspaceSyncControls({
             password for this workspace on this browser; neither password is shared with the owner.
           </small>
         </form>
+      ) : keyStatus === "missing" && legacyMigrationRequired ? (
+        <div className="warning-callout" role="status">
+          The original workspace key is not available on this device. CipherSpace will not create
+          a replacement key because it could not decrypt this legacy data. Restore the existing key
+          share if possible, or use the explicit delete option below.
+        </div>
       ) : keyStatus === "missing" && !keyAccess?.canInitialize ? (
         <div className="warning-callout" role="status">
           Ask a workspace owner to create or refresh your encrypted workspace key share. Do not
@@ -227,7 +243,7 @@ export function WorkspaceSyncControls({
         </form>
       ) : null}
 
-      {keyStatus === "unlocked" ? (
+      {keyStatus === "unlocked" && !legacyMigrationRequired ? (
         <div className="sync-panel__actions">
           <button
             className="button button--primary"

@@ -286,7 +286,7 @@ CipherSpace applies the following practical hardening controls:
 - Locking removes the workspace key and clears note titles, editor values, comment drafts/content, and conflict/merge plaintext from rendered React state. Plaintext can still exist transiently in browser/runtime memory while unlocked and cannot be reliably zeroized as JavaScript strings.
 - Moving the page or installed PWA to the background triggers the same lock immediately. There is no visible-app inactivity timeout, and browsers may delay or terminate background lifecycle events; users should still select **Lock** before handing an unlocked device to someone else.
 - The service worker caches only static application files and a plaintext-free offline page. API/auth/sync/comment responses bypass it, and IndexedDB remains the encrypted local-note store. A compromised service worker or malicious delivered frontend would still run inside the trusted application origin and is outside v1's protection boundary.
-- New local note, queue, conflict, and resolution records store encrypted envelopes and `null` legacy plaintext fields. A key-dependent compatibility migration encrypts legacy schema v1-v4 plaintext after the correct workspace is unlocked.
+- New local note, queue, conflict, and resolution records store encrypted envelopes and `null` legacy plaintext fields. Opening a workspace scans legacy schema v1-v4 note, pending-change, and conflict fields before rendering normal workspace routes. A mandatory gate requires the original workspace key to migrate and verify every record atomically; unsafe records remain untouched and blocked until migration succeeds or the user separately confirms permanent deletion of the affected local records. CipherSpace never creates a replacement key for this flow. Comments are online-only and are not stored in IndexedDB.
 - Docker Compose binds PostgreSQL, API, and web ports to loopback by default. The API container runs as the unprivileged `node` user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a temporary `/tmp` filesystem. Development database credentials and the marked development session secret are not suitable for production.
 
 `SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` and optional `MIGRATIONS_DATABASE_URL` must be PostgreSQL URLs. Pool size, proxy trust, cookie policy, body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
@@ -331,6 +331,36 @@ Prepare three accounts: an owner, a viewer member added by the owner, and an out
 10. **Docker/local regression:** run `docker compose config`, then `docker compose up --build`. Confirm PostgreSQL becomes healthy, migrations complete, `http://localhost:8080/health` returns `200`, registration/login/sync still work, and `docker compose ps` shows all services running. Confirm the API and database are reachable only on the configured loopback bind addresses unless you intentionally changed them.
 
 For CORS/header checks, send a preflight with `Origin: http://localhost:5173` and confirm that exact origin plus `Access-Control-Allow-Credentials: true` is returned. Repeat with `Origin: https://attacker.example` and confirm there is no `Access-Control-Allow-Origin`. Inspect frontend and API responses for the headers described above. In production, serve only over HTTPS, set `NODE_ENV=production`, set a new random `SESSION_SECRET`, use non-development database credentials, and set `CORS_ORIGINS` to the deployed frontend origin or an empty value for same-origin-only operation. The documented separate-domain deployment also sets `SESSION_COOKIE_SAME_SITE=none` and enables `TRUST_PROXY` only behind the hosting provider's trusted edge.
+
+## Manual legacy IndexedDB migration check
+
+Use a disposable local account/workspace and keep its current local unlock password. This test
+intentionally edits browser storage; export or sync anything important first.
+
+1. Create a local note with a unique title/body, leave it unsynced so a matching pending change
+   exists, then lock the workspace.
+2. In browser developer tools, open **Application → IndexedDB → cipherspace-local**. Copy the note's
+   current `id`, `user_id`, and `workspace_id`. In a disposable profile, edit that note so
+   `local_note_payload` contains `{ "title": "Legacy title", "body": "Legacy body" }` and
+   `local_encrypted_payload` is `null`. Edit its matching `pending_changes` row the same way by
+   setting `local_note_payload` and clearing `encrypted_payload`. To cover conflicts, first create a
+   conflict with the manual conflict flow below, then put a legacy payload in its
+   `local_note_payload` or `resolved_note_payload` and clear the corresponding encrypted field.
+3. Reload and open the workspace. Confirm **Legacy plaintext blocks this workspace** appears before
+   notes, comments, conflicts, or sync controls are usable, and that the counts identify the stores
+   you changed.
+4. Unlock with the original workspace password. Confirm the gate disappears only after migration
+   completes. Reopen IndexedDB and verify every affected `local_note_payload` and
+   `resolved_note_payload` is `null`/absent while the corresponding encrypted envelope is present.
+   Lock, reload, and sign out/in; the legacy marker must never reappear as readable stored content.
+5. To test failure safely, repeat with a disposable row whose plaintext field is a malformed value,
+   or whose existing encrypted envelope was produced for another key. Confirm migration reports an
+   error, normal workspace use stays blocked, and the row is unchanged.
+6. Confirm **Review permanent delete option** does nothing by itself. Only the second
+   **Permanently delete affected local records** action may remove data. It deletes the local note,
+   pending-change, and conflict records for every affected note, including unsynced/local-only data;
+   it does not silently delete, quarantine, overwrite, or generate a key. Cancel unless this data is
+   intentionally disposable.
 
 ## Manual frontend check
 

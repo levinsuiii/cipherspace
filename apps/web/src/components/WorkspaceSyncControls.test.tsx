@@ -75,6 +75,18 @@ describe("WorkspaceSyncControls", () => {
     expect(controls.onCreateKey).not.toHaveBeenCalled();
   });
 
+  it("never offers a replacement key while legacy plaintext requires the original key", () => {
+    const controls = { ...props(), keyStatus: "missing" as const };
+    render(<WorkspaceSyncControls {...controls} legacyMigrationRequired />);
+
+    expect(screen.getByText("migration required")).toBeInTheDocument();
+    expect(screen.getByText(/will not create a replacement key/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create and unlock key" })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sync" })).not.toBeInTheDocument();
+  });
+
   it("labels fetch failures as server unavailable without mislabeling API errors", async () => {
     const controls = props();
     controls.onSync.mockRejectedValueOnce(new TypeError("Failed to fetch"));

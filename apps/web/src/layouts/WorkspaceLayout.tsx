@@ -4,12 +4,13 @@ import {
   unwrapWorkspaceKeyShare,
   wrapWorkspaceKeyForRecipient
 } from "@cipherspace/crypto";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { Workspace } from "../api/types";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { LegacyPlaintextGate } from "../components/LegacyPlaintextGate";
 import { WorkspaceSyncControls } from "../components/WorkspaceSyncControls";
 import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
@@ -28,6 +29,12 @@ export function WorkspaceLayout() {
   const localData = useLocalData();
   const workspaceKey = useWorkspaceKey(workspaceId);
   const [localEncryptionError, setLocalEncryptionError] = useState<string | null>(null);
+  const [isMigratingLegacy, setIsMigratingLegacy] = useState(false);
+  const [migrationRetry, setMigrationRetry] = useState(0);
+  const activeMigration = useRef<{
+    promise: Promise<number>;
+    workspaceId: string;
+  } | null>(null);
   const syncEngine = useMemo(
     () => new NoteSyncEngine(localData, api.sync, { getWorkspaceKey: workspaceKey.getKey }),
     [localData, workspaceKey.getKey]
@@ -42,6 +49,10 @@ export function WorkspaceLayout() {
   );
   const conflictsQuery = useLocalQuery(
     () => localData.countConflicts(workspaceId),
+    [localData, workspaceId]
+  );
+  const legacyPlaintextQuery = useLocalQuery(
+    () => localData.inspectLegacyPlaintextWorkspace(workspaceId),
     [localData, workspaceId]
   );
   const workspaceQuery = useQuery({
@@ -63,21 +74,49 @@ export function WorkspaceLayout() {
 
   useEffect(() => {
     let active = true;
-    setLocalEncryptionError(null);
-    if (!workspaceId || workspaceKey.status !== "unlocked") {
+    if (
+      !workspaceId ||
+      workspaceKey.status !== "unlocked" ||
+      !legacyPlaintextQuery.data?.totalRecords
+    ) {
+      setIsMigratingLegacy(false);
+      if (!legacyPlaintextQuery.data?.totalRecords) setLocalEncryptionError(null);
       return () => { active = false; };
     }
-    void workspaceKey.getKey()
-      .then((key) => localData.migratePlaintextWorkspace(workspaceId, key))
-      .catch(() => {
+    setLocalEncryptionError(null);
+    setIsMigratingLegacy(true);
+    let migration = activeMigration.current;
+    if (!migration || migration.workspaceId !== workspaceId) {
+      const promise = workspaceKey.getKey()
+        .then((key) => localData.migratePlaintextWorkspace(workspaceId, key));
+      migration = { promise, workspaceId };
+      activeMigration.current = migration;
+      void promise.finally(() => {
+        if (activeMigration.current?.promise === promise) activeMigration.current = null;
+      }).catch(() => undefined);
+    }
+    void migration.promise
+      .catch((caught: unknown) => {
         if (active) {
           setLocalEncryptionError(
-            "Existing local note data could not be migrated to encrypted storage."
+            caught instanceof Error
+              ? caught.message
+              : "Existing local data could not be migrated to encrypted storage."
           );
         }
+      })
+      .finally(() => {
+        if (active) setIsMigratingLegacy(false);
       });
     return () => { active = false; };
-  }, [localData, workspaceId, workspaceKey.getKey, workspaceKey.status]);
+  }, [
+    legacyPlaintextQuery.data?.totalRecords,
+    localData,
+    migrationRetry,
+    workspaceId,
+    workspaceKey.getKey,
+    workspaceKey.status
+  ]);
 
   const cachedWorkspace = cachedWorkspaceQuery.data;
   const workspace: Workspace | undefined = workspaceQuery.data?.workspace ??
@@ -151,6 +190,34 @@ export function WorkspaceLayout() {
   if (!workspace) {
     return <ErrorState error={new Error("Workspace not found.")} />;
   }
+  if (legacyPlaintextQuery.isLoading) {
+    return <LoadingState label="Checking local storage for legacy plaintext…" />;
+  }
+  if (legacyPlaintextQuery.error) {
+    return <ErrorState error={legacyPlaintextQuery.error} />;
+  }
+
+  const legacyInspection = legacyPlaintextQuery.data!;
+  const normalWorkspace = (
+    <>
+      <WorkspaceSyncControls
+        conflictCount={conflictsQuery.data ?? 0}
+        keyStatus={workspaceKey.status}
+        keyAccess={keyAccessQuery.data?.keyAccess ?? null}
+        onCreateKey={createInitialWorkspaceKey}
+        onLock={workspaceKey.lock}
+        onSync={() => syncEngine.syncWorkspace(workspace.id)}
+        onSetupShared={setupSharedWorkspace}
+        onUnlock={workspaceKey.unlock}
+        pendingCount={pendingChangesQuery.data ?? 0}
+      />
+      <nav className="tabs" aria-label="Workspace navigation">
+        <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>
+        <NavLink to={`/workspaces/${workspace.id}/notes`}>Notes</NavLink>
+      </nav>
+      <Outlet context={{ workspace } satisfies WorkspaceOutletContext} />
+    </>
+  );
 
   return (
     <section>
@@ -185,25 +252,29 @@ export function WorkspaceLayout() {
           <span className={`role-badge role-badge--${workspace.role}`}>{workspace.role}</span>
         </div>
       </header>
-      <WorkspaceSyncControls
-        conflictCount={conflictsQuery.data ?? 0}
-        keyStatus={workspaceKey.status}
-        keyAccess={keyAccessQuery.data?.keyAccess ?? null}
-        onCreateKey={createInitialWorkspaceKey}
-        onLock={workspaceKey.lock}
-        onSync={() => syncEngine.syncWorkspace(workspace.id)}
-        onSetupShared={setupSharedWorkspace}
-        onUnlock={workspaceKey.unlock}
-        pendingCount={pendingChangesQuery.data ?? 0}
-      />
-      {localEncryptionError ? (
-        <div className="form-error" role="alert">{localEncryptionError}</div>
-      ) : null}
-      <nav className="tabs" aria-label="Workspace navigation">
-        <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>
-        <NavLink to={`/workspaces/${workspace.id}/notes`}>Notes</NavLink>
-      </nav>
-      <Outlet context={{ workspace } satisfies WorkspaceOutletContext} />
+      <LegacyPlaintextGate
+        accessControls={(
+          <WorkspaceSyncControls
+            conflictCount={conflictsQuery.data ?? 0}
+            keyStatus={workspaceKey.status}
+            keyAccess={keyAccessQuery.data?.keyAccess ?? null}
+            legacyMigrationRequired
+            onCreateKey={createInitialWorkspaceKey}
+            onLock={workspaceKey.lock}
+            onSync={() => syncEngine.syncWorkspace(workspace.id)}
+            onSetupShared={setupSharedWorkspace}
+            onUnlock={workspaceKey.unlock}
+            pendingCount={pendingChangesQuery.data ?? 0}
+          />
+        )}
+        error={localEncryptionError}
+        inspection={legacyInspection}
+        isMigrating={isMigratingLegacy}
+        onDelete={() => localData.deleteLegacyPlaintextWorkspace(workspaceId).then(() => undefined)}
+        onRetry={() => setMigrationRetry((current) => current + 1)}
+      >
+        {normalWorkspace}
+      </LegacyPlaintextGate>
     </section>
   );
 }
