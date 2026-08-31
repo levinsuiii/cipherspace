@@ -9,7 +9,12 @@ describe("conflict snapshot crypto", () => {
     const key = await generateWorkspaceKey();
     const encrypted = await encryptNoteContent(
       JSON.stringify({ body: "Remote body", title: "Remote title" }),
-      key
+      key,
+      {
+        localRevision: 2,
+        noteId: "30000000-0000-4000-8000-000000000001",
+        workspaceId: "10000000-0000-4000-8000-000000000001"
+      }
     );
     const version: LocalNoteVersion = {
       client_version: "2",

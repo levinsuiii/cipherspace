@@ -13,6 +13,11 @@ import { LocalWorkspaceKeyRepository } from "./workspaceKeyRepository";
 const userId = "00000000-0000-4000-8000-000000000001";
 const workspaceId = "10000000-0000-4000-8000-000000000001";
 const passphrase = "a local unlock password for tests";
+const noteContext = {
+  localRevision: 1,
+  noteId: "30000000-0000-4000-8000-000000000001",
+  workspaceId
+};
 
 describe("LocalWorkspaceKeyRepository", () => {
   let database: CipherSpaceLocalDatabase;
@@ -33,7 +38,7 @@ describe("LocalWorkspaceKeyRepository", () => {
 
   it("persists only a protected workspace key and unlocks it after database reopen", async () => {
     const workspaceKey = await generateWorkspaceKey();
-    const note = await encryptNoteContent("decryptable after reload", workspaceKey);
+    const note = await encryptNoteContent("decryptable after reload", workspaceKey, noteContext);
     const protectedKey = await protectWorkspaceKey(workspaceKey, passphrase, {
       userId,
       workspaceId
@@ -58,7 +63,7 @@ describe("LocalWorkspaceKeyRepository", () => {
       workspaceId
     });
 
-    await expect(decryptNoteContent(note, unlocked)).resolves.toBe("decryptable after reload");
+    await expect(decryptNoteContent(note, unlocked, noteContext)).resolves.toBe("decryptable after reload");
   });
 
   it("does not silently replace an existing protected workspace key", async () => {

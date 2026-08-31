@@ -47,7 +47,7 @@ function aesGcmCiphertext(maxBytes: number) {
 const encryptionMetadataSchema = z
   .object({
     algorithm: z.literal("AES-GCM"),
-    envelopeVersion: z.literal(1),
+    envelopeVersion: z.union([z.literal(1), z.literal(2)]),
     keyId: z.string().trim().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/)
   })
   .strict();
@@ -58,12 +58,26 @@ const versionBodyShape = {
   encryptedContent: aesGcmCiphertext(1024 * 1024),
   encryptionMetadata: encryptionMetadataSchema
 };
-const versionBodySchema = z.object(versionBodyShape).strict();
+const versionBodySchema = z
+  .object(versionBodyShape)
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.encryptionMetadata.envelopeVersion === 2 &&
+      !/^[1-9][0-9]*$/.test(value.clientVersion ?? "")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Version 2 note envelopes require a positive local revision."
+      });
+    }
+  });
 const createNoteBodySchema = z
   .object({
     ...versionBodyShape,
     encryptedTitle: aesGcmCiphertext(16 * 1024).nullable().optional(),
-    encryptedTitleNonce: aesGcmNonceSchema.nullable().optional()
+    encryptedTitleNonce: aesGcmNonceSchema.nullable().optional(),
+    id: z.string().uuid().optional()
   })
   .strict()
   .superRefine((value, context) => {
@@ -73,6 +87,21 @@ const createNoteBodySchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Encrypted title and nonce must be supplied together."
+      });
+    }
+    if (value.encryptionMetadata.envelopeVersion === 2 && !value.id) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Version 2 note envelopes require a client-selected note ID."
+      });
+    }
+    if (
+      value.encryptionMetadata.envelopeVersion === 2 &&
+      !/^[1-9][0-9]*$/.test(value.clientVersion ?? "")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Version 2 note envelopes require a positive local revision."
       });
     }
   });

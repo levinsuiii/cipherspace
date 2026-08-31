@@ -15,7 +15,10 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - Workspace note pages list the durable local cache, show explicit loading/error/empty/offline states, and expose cached encrypted server-version metadata separately from the local editor payload.
 - Local and server-backed note envelopes are decrypted only after workspace unlock and displayed from memory. Locking immediately replaces list/detail titles with an encrypted placeholder, clears rendered editor values plus new-note/comment/conflict-merge drafts, and disables editing; wrong-key states expose no partial plaintext.
 - Explicit lock, document hiding, and `pagehide` remove all unwrapped workspace keys from memory. A generation check prevents a slow create/unlock operation from restoring a key after the app was backgrounded.
-- Selecting **Save local change** encrypts the current title/body with a fresh nonce before atomically storing the local note and pending update. New note, queue, conflict, and resolved-conflict records persist ciphertext rather than plaintext.
+- Selecting **Save local change** encrypts the current title/body with a fresh nonce and a version 2
+  envelope bound to the workspace ID, note ID, and next local revision before atomically storing the
+  local note and pending update. New note, queue, conflict, and resolved-conflict records persist
+  ciphertext rather than plaintext.
 - Owners and editors can create and edit local notes; owners can add local tombstones. Viewers remain read-only. These local actions do not call the direct encrypted-note API.
 - The typed frontend API client sends credentials with every request and preserves structured backend error messages. Vite and Nginx proxy API traffic so the browser session remains same-origin.
 - Frontend tests verify cookie credential handling, structured error propagation, and live auth-state cleanup on logout.
@@ -91,14 +94,25 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - Every appended version receives a monotonically increasing server version number and records the previously current version as `parentVersionId`. Optional `clientVersion` metadata is retained for future client/sync work.
 - Owners can soft-delete notes. Deleted notes and version rows remain in PostgreSQL but are excluded from normal list, detail, append, and history endpoints.
 - Note authorization is checked against current workspace membership. Non-members receive workspace-not-found responses, viewers cannot mutate notes, and only owners can delete notes.
-- The backend validates UUIDs, strict request shapes, canonical base64, version 1 AES-GCM metadata, exact 12-byte nonces, minimum authentication-tag length, and decoded ciphertext limits without decrypting or interpreting note data.
+- The backend validates UUIDs, strict request shapes, canonical base64, version 1 or 2 AES-GCM
+  metadata, exact 12-byte nonces, minimum authentication-tag length, and decoded ciphertext limits
+  without decrypting or interpreting note data. Version 2 direct creates require the client-selected
+  object ID needed before encryption.
 - Vitest also covers owner/editor note creation, viewer mutation denial, non-member denial, version appends and parent chains, viewer history access, owner-only deletion, and deleted-note filtering.
 - Sync route tests cover accepted push, pull, opaque cursor continuation, repeated-push idempotency, stale-base conflict detection, and non-member denial.
 - Frontend sync tests cover crypto-package preparation, successful status transition, cursor persistence across database reopen, safe retry metadata, conflict snapshots, protection of unsynced drafts during pull, all three resolution choices, remote snapshot decryption, and successful sync of a resolved version.
 - Root npm scripts provide development, build, type-check, test, and migration commands.
 - `packages/crypto` contains browser-compatible TypeScript wrappers around the platform Web Crypto API and has no runtime dependencies.
-- The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces, encrypts and decrypts UTF-8 note content with 128-bit authentication tags, and serializes strict version 1 envelopes as canonical base64.
-- Fixed envelope metadata is authenticated as AES-GCM additional data. Runtime validation rejects missing or extra fields, unsupported algorithms or versions, malformed base64, incorrect nonce lengths, oversized ciphertext, tampering, and wrong keys without returning plaintext.
+- The crypto package generates extractable AES-256-GCM workspace keys and fresh 96-bit nonces,
+  encrypts and decrypts UTF-8 note/comment content with 128-bit authentication tags, and serializes
+  strict version 2 envelopes as canonical base64. Version 1 envelopes remain readable as legacy
+  data.
+- Version 2 deterministic AES-GCM AAD binds notes to content class, workspace ID, note ID, local
+  revision, algorithm, envelope version, and key version. It binds comments to content class,
+  workspace ID, note ID, comment ID, author ID, optional parent comment ID, algorithm, envelope
+  version, and key version. Runtime validation rejects missing/extra context, unsupported algorithms
+  or versions, malformed base64, incorrect nonce lengths, oversized ciphertext, tampering, wrong
+  keys, and metadata swaps without returning plaintext.
 - Raw 32-byte workspace keys can be exported and imported for wrapping. The v1 local flow protects them with PBKDF2-HMAC-SHA-256 (random 128-bit salt, 600,000 iterations) and AES-256-GCM before IndexedDB persistence; unwrapped keys remain in memory only.
 - RSA-OAEP-3072/SHA-256 member wrapping, local recipient setup, and manual encrypted identity transfer through recovery kits are implemented. Automatic device pairing, identity replacement, parameter migration, key rotation, and cryptographic revocation are not.
 - Crypto unit tests cover Unicode and empty-content round trips, fresh nonce use, key generation and portability, protected-key round trips, wrong password/context, wrong-key and ciphertext-authentication failures, and malformed payloads.
@@ -107,7 +121,9 @@ CipherSpace now has a runnable responsive React frontend, an installable Progres
 - Owners and editors can create encrypted comments. All workspace members can list comments on active notes; viewers remain read-only and non-members receive workspace-not-found responses.
 - Editors can soft-delete their own comments, while owners can soft-delete any comment. Deletion preserves the thread placeholder and metadata but clears ciphertext, nonce, and encryption metadata from PostgreSQL and API responses.
 - The note detail UI lists and decrypts comments after workspace unlock, supports parent-linked replies, updates query state immediately after create/delete, and shows role-aware controls.
-- Comment encryption uses AES-256-GCM through `@cipherspace/crypto` with fresh 96-bit nonces and a comment-specific authenticated-data context. Focused crypto tests verify round trips, fresh nonces, and separation from note envelopes.
+- Comment encryption uses AES-256-GCM through `@cipherspace/crypto` with fresh 96-bit nonces and the
+  version 2 comment context. Focused crypto tests verify round trips, fresh nonces, separation from
+  note envelopes, and failure after changing the note, comment, author, or parent-thread metadata.
 - Comments deliberately use direct authenticated API calls and TanStack Query rather than IndexedDB or the note sync engine. A note must have a server version before discussion is enabled. Drafts exist only in component state, so comments require a live connection and have no offline retry or conflict behavior.
 
 The established stack is React, TypeScript, Vite, React Router, TanStack Query, Dexie, and IndexedDB for the frontend, plus Node.js 22+, Fastify, `pg`, PostgreSQL, Zod environment validation, Argon2id password hashing, database-backed cookie sessions, exact-origin CORS, Helmet security headers, auth rate limiting, and Vitest. `fake-indexeddb` provides deterministic local persistence tests.
@@ -211,6 +227,10 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Comment bodies are encrypted before transport, but comment IDs, note/workspace links, authors, parent links, timestamps, deletion state, ciphertext sizes, and discussion activity remain server-visible metadata. Comments are not cached in IndexedDB and cannot be created or read offline.
 - Browser storage schema version 2 upgrades version 1 pending records with retry fields and adds conflict/client metadata; version 3 adds protected workspace-key envelopes; version 4 adds conflict-resolution metadata; version 5 adds encrypted local/resolved payload fields; version 6 adds protected user identity records. Legacy plaintext note, queue, and conflict payloads are encrypted and cleared lazily after a successful workspace unlock because a Dexie schema upgrade cannot access the in-memory workspace key.
 - Route tests use in-memory auth, workspace, and note repositories; database migration execution and an end-to-end note API flow are verified manually through the local PostgreSQL setup rather than an automated integration test.
-- Authentication, local encryption, identity generation, recovery export/import, wrong-passphrase and malformed-kit failure, non-overwrite behavior, recovered-identity workspace-share decryption, wrapping/unwrapping, note/comment decryption, public-key APIs, key-share authorization, and role regressions have automated coverage. The design has not received an independent security or cryptographic review.
+- Authentication, local encryption, identity generation, recovery export/import, wrong-passphrase
+  and malformed-kit failure, non-overwrite behavior, recovered-identity workspace-share decryption,
+  wrapping/unwrapping, context-bound note/comment decryption, ciphertext-swap rejection, public-key
+  APIs, key-share authorization, and role regressions have automated coverage. The design has not
+  received an independent security or cryptographic review.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

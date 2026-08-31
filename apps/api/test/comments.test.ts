@@ -36,6 +36,7 @@ const testConfig: AppConfig = {
 };
 
 const ids = {
+  comment: "40000000-0000-4000-8000-000000000001",
   editor: "00000000-0000-4000-8000-000000000002",
   note: "30000000-0000-4000-8000-000000000001",
   owner: "00000000-0000-4000-8000-000000000001",
@@ -245,6 +246,26 @@ describe("encrypted comment routes", () => {
       parentCommentId: null,
       workspaceId: ids.workspace
     });
+  });
+
+  it("accepts a client-selected ID for version 2 comments and requires it", async () => {
+    const version2 = {
+      ...commentPayload,
+      encryptionMetadata: { ...commentPayload.encryptionMetadata, envelopeVersion: 2 },
+      id: ids.comment
+    };
+    const created = await createComment(cookies.owner, version2);
+    const missingId = await createComment(cookies.owner, {
+      ...version2,
+      id: undefined
+    });
+
+    expect(created.statusCode).toBe(201);
+    expect(created.json().comment).toMatchObject({
+      encryptionMetadata: version2.encryptionMetadata,
+      id: ids.comment
+    });
+    expect(missingId.statusCode).toBe(400);
   });
 
   it("allows members to list comments and preserves parent-linked replies", async () => {

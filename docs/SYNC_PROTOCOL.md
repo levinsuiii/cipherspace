@@ -43,7 +43,9 @@ Automatic merging, automated device pairing, identity replacement, rotation, cry
 ## Local-First Flow
 
 1. The user creates or unlocks the workspace's locally protected key. Create/edit controls remain disabled while locked.
-2. A create or update is serialized as `{ title, body }` and encrypted with `@cipherspace/crypto` using a fresh nonce; deletes contain no payload.
+2. A create or update is serialized as `{ title, body }` and encrypted with
+   `@cipherspace/crypto` using a fresh nonce. Version 2 AAD binds the workspace ID, note ID, and
+   positive local revision before the envelope is persisted; deletes contain no payload.
 3. The encrypted local note and matching encrypted pending change are written in one IndexedDB transaction.
 4. The sync engine loads `pending` and `failed` operations in local creation order. A locked workspace cannot start manual sync from the UI.
 5. Sync sends the exact envelope stored for that local revision. A later edit replaces it with a newly encrypted envelope; a compatibility path encrypts legacy plaintext queue records after unlock.
@@ -75,7 +77,7 @@ Dependent operations are pushed sequentially. For example, an offline create fol
       "encryptedPayload": {
         "algorithm": "AES-GCM",
         "ciphertext": "base64-ciphertext",
-        "envelopeVersion": 1,
+        "envelopeVersion": 2,
         "keyVersion": 1,
         "nonce": "base64-nonce"
       },
@@ -136,7 +138,7 @@ Omit `cursor` for the initial pull. A response has this shape:
         "contentNonce": "base64-nonce",
         "encryptionMetadata": {
           "algorithm": "AES-GCM",
-          "envelopeVersion": 1,
+          "envelopeVersion": 2,
           "keyId": "workspace-key-v1"
         }
       }
@@ -205,7 +207,17 @@ Each attempt stores `attempt_count`, `last_attempt_at`, and `last_error`. If a u
 
 ## Encryption Boundary
 
-The server validates envelope shape, base64 encoding, and size, but treats ciphertext as opaque. The client sync helper calls `encryptNoteContent()` from `@cipherspace/crypto`; it does not implement cryptography itself.
+The server validates envelope shape, base64 encoding, and size, but treats ciphertext as opaque. The
+client note-mutation boundary calls `encryptNoteContent()` from `@cipherspace/crypto`; the sync
+engine reuses that durable envelope and does not implement cryptography itself.
+
+New note writes use envelope version 2. AES-GCM additional authenticated data is deterministic UTF-8
+JSON with fixed array positions:
+`["cipherspace.note",2,"AES-GCM",1,workspace_id,note_id,local_revision]`. The local revision is sent
+as `clientRevision` and stored by the backend as the immutable version's numeric-string
+`clientVersion`, allowing pulled/cached versions to reconstruct the same AAD. A mismatch in
+workspace, note, or revision therefore fails decryption. Version 1 envelopes retain their original
+fixed AAD and remain readable for backward compatibility, but are not emitted by new clients.
 
 The v1 key provider creates one random AES-256-GCM workspace key and immediately protects the creator's local copy with an independently chosen local unlock password. PBKDF2-HMAC-SHA-256 uses a random 128-bit salt and 600,000 iterations to derive an AES-256-GCM wrapping key. A fresh 96-bit nonce is used for the key wrap, and authenticated additional data binds the protection version, user ID, and workspace ID. IndexedDB stores only the versioned protected-key envelope; the raw/unwrapped key exists only in memory while unlocked.
 
@@ -231,5 +243,6 @@ Deletes are server tombstones. An accepted delete records the current base versi
 
 - PostgreSQL migration `0005_note_sync_protocol.sql` adds durable idempotency outcomes.
 - IndexedDB schema version 2 adds conflicts and retry/client metadata while upgrading existing version 1 records. Schema version 3 additively introduces protected workspace keys. Schema version 4 adds durable resolution metadata. Schema version 5 adds encrypted local/resolved payload fields; legacy plaintext content is encrypted and cleared lazily after unlock because schema upgrade code has no workspace key. Schema version 6 adds locally protected user identity records without changing existing workspace-key envelopes.
-- Envelope version 1 and cursor version 1 are explicit.
+- Content envelope versions 1 and 2 and cursor version 1 are explicit. Version 1 content envelopes
+  remain read-compatible and weaker; new content writes use version 2.
 - Future persisted-format changes require additive database migrations and compatibility notes.

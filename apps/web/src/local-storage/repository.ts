@@ -6,7 +6,7 @@ import type {
   SyncPushResult,
   Workspace
 } from "../api/types";
-import type { EncryptedNotePayload } from "@cipherspace/crypto";
+import type { EncryptedNotePayload, NoteEncryptionContext } from "@cipherspace/crypto";
 import type { CipherSpaceLocalDatabase } from "./database";
 import {
   decryptLocalNotePayload,
@@ -171,11 +171,11 @@ export class LocalNotesRepository {
   public async createNote(
     workspaceId: string,
     payload: LocalNotePayload,
-    encryptedPayload: EncryptedNotePayload
+    encryptedPayload: EncryptedNotePayload,
+    noteId = this.createId()
   ): Promise<LocalNote> {
     this.validateLocalPayload(payload);
     const timestamp = this.now();
-    const noteId = this.createId();
     const note: LocalNote = {
       base_version_id: null,
       created_at: timestamp,
@@ -211,10 +211,25 @@ export class LocalNotesRepository {
     return note;
   }
 
+  public async createEncryptedNote(
+    workspaceId: string,
+    payload: LocalNotePayload,
+    workspaceKey: CryptoKey
+  ): Promise<LocalNote> {
+    const noteId = this.createId();
+    const encryptedPayload = await encryptLocalNotePayload(payload, workspaceKey, {
+      localRevision: 1,
+      noteId,
+      workspaceId
+    });
+    return this.createNote(workspaceId, payload, encryptedPayload, noteId);
+  }
+
   public async editNote(
     noteId: string,
     payload: LocalNotePayload,
-    encryptedPayload: EncryptedNotePayload
+    encryptedPayload: EncryptedNotePayload,
+    expectedCurrentRevision?: number
   ): Promise<LocalNote> {
     this.validateLocalPayload(payload);
     return this.database.transaction(
@@ -223,6 +238,12 @@ export class LocalNotesRepository {
       this.database.pending_changes,
       async () => {
         const note = await this.requireActiveNote(noteId);
+        if (
+          expectedCurrentRevision !== undefined &&
+          note.local_revision !== expectedCurrentRevision
+        ) {
+          throw new Error("The local note changed while its encrypted envelope was being prepared.");
+        }
         const timestamp = this.now();
         const updatedNote: LocalNote = {
           ...note,
@@ -236,6 +257,20 @@ export class LocalNotesRepository {
         return updatedNote;
       }
     );
+  }
+
+  public async editEncryptedNote(
+    noteId: string,
+    payload: LocalNotePayload,
+    workspaceKey: CryptoKey
+  ): Promise<LocalNote> {
+    const note = await this.requireActiveNote(noteId);
+    const encryptedPayload = await encryptLocalNotePayload(payload, workspaceKey, {
+      localRevision: note.local_revision + 1,
+      noteId,
+      workspaceId: note.workspace_id
+    });
+    return this.editNote(noteId, payload, encryptedPayload, note.local_revision);
   }
 
   public async deleteNote(noteId: string): Promise<LocalNote> {
@@ -328,15 +363,19 @@ export class LocalNotesRepository {
 
     const prepareEnvelope = async (
       value: unknown,
-      existing: EncryptedNotePayload | null
+      existing: EncryptedNotePayload | null,
+      context: NoteEncryptionContext
     ): Promise<{ encrypted: EncryptedNotePayload; payload: LocalNotePayload }> => {
       const payload = parseLegacyPayload(value);
       if (!existing) {
-        return { encrypted: await encryptLocalNotePayload(payload, workspaceKey), payload };
+        return {
+          encrypted: await encryptLocalNotePayload(payload, workspaceKey, context),
+          payload
+        };
       }
       let decrypted: LocalNotePayload;
       try {
-        decrypted = await decryptLocalNotePayload(existing, workspaceKey);
+        decrypted = await decryptLocalNotePayload(existing, workspaceKey, context);
       } catch {
         throw new LegacyPlaintextMigrationError(
           "A legacy record has an encrypted envelope that cannot be verified with this workspace key. Nothing was changed."
@@ -352,7 +391,11 @@ export class LocalNotesRepository {
 
     const notePlans = await Promise.all(
       notes.filter((note) => hasLegacyPlaintext(note.local_note_payload)).map(async (note) => ({
-        ...(await prepareEnvelope(note.local_note_payload, note.local_encrypted_payload)),
+        ...(await prepareEnvelope(note.local_note_payload, note.local_encrypted_payload, {
+          localRevision: note.local_revision,
+          noteId: note.id,
+          workspaceId: note.workspace_id
+        })),
         key: note.key,
         revision: note.local_revision
       }))
@@ -360,7 +403,11 @@ export class LocalNotesRepository {
     const changePlans = await Promise.all(
       changes.filter((change) => hasLegacyPlaintext(change.local_note_payload)).map(
         async (change) => ({
-          ...(await prepareEnvelope(change.local_note_payload, change.encrypted_payload)),
+          ...(await prepareEnvelope(change.local_note_payload, change.encrypted_payload, {
+            localRevision: change.local_revision,
+            noteId: change.note_id,
+            workspaceId: change.workspace_id
+          })),
           id: change.id,
           revision: change.local_revision
         })
@@ -372,16 +419,31 @@ export class LocalNotesRepository {
           hasLegacyPlaintext(conflict.local_note_payload) ||
           hasLegacyPlaintext(conflict.resolved_note_payload)
       ).map(async (conflict) => {
+        const localContext = {
+          localRevision: conflict.local_revision,
+          noteId: conflict.note_id,
+          workspaceId: conflict.workspace_id
+        };
+        const resolutionChange = conflict.resolution_pending_change_id
+          ? changes.find((change) => change.id === conflict.resolution_pending_change_id)
+          : undefined;
+        const resolvedContext = {
+          localRevision: resolutionChange?.local_revision ?? conflict.local_revision,
+          noteId: conflict.note_id,
+          workspaceId: conflict.workspace_id
+        };
         const local = hasLegacyPlaintext(conflict.local_note_payload)
           ? await prepareEnvelope(
               conflict.local_note_payload,
-              conflict.local_encrypted_payload
+              conflict.local_encrypted_payload,
+              localContext
             )
           : null;
         const resolved = hasLegacyPlaintext(conflict.resolved_note_payload)
           ? await prepareEnvelope(
               conflict.resolved_note_payload,
-              conflict.resolved_encrypted_payload
+              conflict.resolved_encrypted_payload,
+              resolvedContext
             )
           : null;
         return {
@@ -864,10 +926,41 @@ export class LocalNotesRepository {
       )[0] ?? null;
   }
 
+  public async resolveEncryptedConflict(
+    conflictId: string,
+    resolution: ConflictResolutionInput,
+    payload: LocalNotePayload,
+    workspaceKey: CryptoKey
+  ): Promise<PendingChange> {
+    const conflict = await this.database.conflicts.get(scopedKey(this.userId, conflictId));
+    if (!conflict || conflict.status !== "unresolved") {
+      throw new Error("The conflict does not exist or has already been resolved.");
+    }
+    const note = await this.database.notes.get(scopedKey(this.userId, conflict.note_id));
+    if (!note || note.workspace_id !== conflict.workspace_id) {
+      throw new Error("The conflicted local note could not be found.");
+    }
+    const pending = await this.database.pending_changes
+      .where("[user_id+note_id]")
+      .equals([this.userId, conflict.note_id])
+      .toArray();
+    const nextRevision = Math.max(
+      note.local_revision,
+      ...pending.map((change) => change.local_revision)
+    ) + 1;
+    const encryptedResolution = await encryptLocalNotePayload(payload, workspaceKey, {
+      localRevision: nextRevision,
+      noteId: conflict.note_id,
+      workspaceId: conflict.workspace_id
+    });
+    return this.resolveConflict(conflictId, resolution, encryptedResolution, nextRevision);
+  }
+
   public async resolveConflict(
     conflictId: string,
     resolution: ConflictResolutionInput,
-    encryptedResolution?: EncryptedNotePayload
+    encryptedResolution?: EncryptedNotePayload,
+    expectedNextRevision?: number
   ): Promise<PendingChange> {
     return this.database.transaction(
       "rw",
@@ -913,6 +1006,9 @@ export class LocalNotesRepository {
           note.local_revision,
           ...pending.map((change) => change.local_revision)
         ) + 1;
+        if (expectedNextRevision !== undefined && nextRevision !== expectedNextRevision) {
+          throw new Error("The conflict changed while its encrypted resolution was being prepared.");
+        }
         const resolvedNote: LocalNote = {
           ...note,
           base_version_id: conflict.remote_version.id,

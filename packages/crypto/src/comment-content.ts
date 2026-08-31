@@ -2,26 +2,26 @@ import {
   AES_GCM_NONCE_LENGTH_BYTES,
   AES_GCM_TAG_LENGTH_BITS,
   AES_GCM_TAG_LENGTH_BYTES,
+  LEGACY_CONTENT_ENVELOPE_VERSION,
   MAX_COMMENT_CIPHERTEXT_BYTES,
   NOTE_ENCRYPTION_ALGORITHM,
   NOTE_ENVELOPE_VERSION,
   WORKSPACE_KEY_VERSION
 } from "./constants.js";
+import { commentAdditionalData } from "./content-aad.js";
 import { decodeBase64, encodeBase64 } from "./encoding.js";
 import { CipherSpaceCryptoError } from "./errors.js";
 import { generateNonce } from "./note-content.js";
-import type { EncryptedCommentPayload } from "./types.js";
+import type { CommentEncryptionContext, EncryptedCommentPayload } from "./types.js";
 import { assertWorkspaceKey } from "./workspace-key.js";
 
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 const PAYLOAD_KEYS = ["algorithm", "ciphertext", "envelopeVersion", "keyVersion", "nonce"];
-const AUTHENTICATED_METADATA = textEncoder.encode(
-  `cipherspace.comment|${NOTE_ENVELOPE_VERSION}|${NOTE_ENCRYPTION_ALGORITHM}|${WORKSPACE_KEY_VERSION}`
-);
 
 function validatePayload(payload: unknown): {
   ciphertext: Uint8Array<ArrayBuffer>;
+  envelopeVersion: typeof LEGACY_CONTENT_ENVELOPE_VERSION | typeof NOTE_ENVELOPE_VERSION;
   nonce: Uint8Array<ArrayBuffer>;
 } {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
@@ -37,7 +37,8 @@ function validatePayload(payload: unknown): {
   }
   if (
     record.algorithm !== NOTE_ENCRYPTION_ALGORITHM ||
-    record.envelopeVersion !== NOTE_ENVELOPE_VERSION ||
+    (record.envelopeVersion !== LEGACY_CONTENT_ENVELOPE_VERSION &&
+      record.envelopeVersion !== NOTE_ENVELOPE_VERSION) ||
     record.keyVersion !== WORKSPACE_KEY_VERSION
   ) {
     throw new CipherSpaceCryptoError("invalid_payload", "Unsupported comment encryption metadata.");
@@ -60,15 +61,17 @@ function validatePayload(payload: unknown): {
       `Comment ciphertext must contain between ${AES_GCM_TAG_LENGTH_BYTES} and ${MAX_COMMENT_CIPHERTEXT_BYTES} bytes.`
     );
   }
-  return { ciphertext, nonce };
+  return { ciphertext, envelopeVersion: record.envelopeVersion, nonce };
 }
 
 export async function encryptCommentContent(
   plaintext: string,
-  key: CryptoKey
+  key: CryptoKey,
+  context: CommentEncryptionContext
 ): Promise<EncryptedCommentPayload> {
   if (typeof plaintext !== "string") throw new TypeError("plaintext must be a string.");
   assertWorkspaceKey(key, "encrypt");
+  const additionalData = commentAdditionalData(NOTE_ENVELOPE_VERSION, context);
   const encodedPlaintext = textEncoder.encode(plaintext);
   if (encodedPlaintext.byteLength + AES_GCM_TAG_LENGTH_BYTES > MAX_COMMENT_CIPHERTEXT_BYTES) {
     encodedPlaintext.fill(0);
@@ -84,7 +87,7 @@ export async function encryptCommentContent(
       {
         name: NOTE_ENCRYPTION_ALGORITHM,
         iv: nonce,
-        additionalData: AUTHENTICATED_METADATA,
+        additionalData,
         tagLength: AES_GCM_TAG_LENGTH_BITS
       },
       key,
@@ -106,15 +109,20 @@ export async function encryptCommentContent(
   }
 }
 
-export async function decryptCommentContent(payload: unknown, key: CryptoKey): Promise<string> {
+export async function decryptCommentContent(
+  payload: unknown,
+  key: CryptoKey,
+  context?: CommentEncryptionContext
+): Promise<string> {
   assertWorkspaceKey(key, "decrypt");
-  const { ciphertext, nonce } = validatePayload(payload);
+  const { ciphertext, envelopeVersion, nonce } = validatePayload(payload);
+  const additionalData = commentAdditionalData(envelopeVersion, context);
   try {
     const plaintextBuffer = await crypto.subtle.decrypt(
       {
         name: NOTE_ENCRYPTION_ALGORITHM,
         iv: nonce,
-        additionalData: AUTHENTICATED_METADATA,
+        additionalData,
         tagLength: AES_GCM_TAG_LENGTH_BITS
       },
       key,

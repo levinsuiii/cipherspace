@@ -6,7 +6,16 @@ CipherSpace v1 aims to protect note content from routine server-side plaintext a
 
 The backend now provides email/password account registration, database-backed sessions, workspace membership authorization, encrypted-note/version storage APIs, and encrypted note-scoped comments. The browser frontend uses those APIs through a same-origin local proxy or an explicitly configured production API origin and does not read or persist the HTTP-only session token. Passwords are held only in the sign-in or registration form long enough to submit the request and are not stored by the application. Passwords are hashed with Argon2id on the backend using 19 MiB of memory, two iterations, one lane, and a 32-byte hash. Clients receive random opaque session tokens in host-only, HTTP-only, high-priority cookies; `SameSite` defaults to `Strict`, while the documented separate-domain production topology explicitly uses `None` with `Secure`. PostgreSQL stores only keyed HMAC-SHA-256 token digests. The current session can be invalidated through logout, and expired sessions are rejected. Registration and login share an IP-based rate-limit bucket that defaults to 10 attempts per 60 seconds per API process. Workspace members can read workspace metadata, membership, encrypted notes, encrypted version history, and encrypted comments. Owners and editors can create notes, append versions, and create comments; only owners can soft-delete notes. Editors may delete their own comments, and owners may moderate any comment. The final owner is protected with serialized database transactions.
 
-Note and comment routes validate and store opaque base64 ciphertext, nonces, and encryption metadata without decrypting them. The isolated client crypto package generates AES-256-GCM workspace keys, uses fresh random 96-bit nonces, encrypts and decrypts note and comment content with 128-bit authentication tags, and validates versioned envelopes. Notes and comments use distinct fixed authenticated-data contexts so an envelope from one content class cannot be decrypted as the other. Wrong keys, tampered ciphertext, malformed payloads, and cross-context swaps fail without returning plaintext.
+Note and comment routes validate and store opaque base64 ciphertext, nonces, and encryption metadata
+without decrypting them. The isolated client crypto package generates AES-256-GCM workspace keys,
+uses fresh random 96-bit nonces, encrypts and decrypts note and comment content with 128-bit
+authentication tags, and validates versioned envelopes. New version 2 notes authenticate their
+workspace ID, note ID, and local revision. New version 2 comments authenticate their workspace ID,
+note ID, comment ID, author ID, and optional parent comment ID. Both also authenticate a distinct
+content class, the algorithm, envelope version, and workspace-key version. Wrong keys, tampered
+ciphertext, malformed payloads, cross-content swaps, and changes to any bound metadata fail without
+returning plaintext. Legacy version 1 envelopes remain readable with their original weaker fixed
+AAD.
 
 Comments use direct authenticated API calls and are not queued in IndexedDB or included in note sync. A draft exists only in React state until submission. Soft-deleting a comment clears its ciphertext, nonce, and encryption metadata in PostgreSQL while retaining authorship, parent linkage, and timestamps for a safe discussion placeholder. Previously downloaded ciphertext or plaintext cannot be revoked from a member or compromised device.
 
@@ -113,8 +122,15 @@ Implemented primitive model:
 - Generate a random, extractable 256-bit AES-GCM workspace content key with Web Crypto.
 - Encrypt UTF-8 note content with AES-GCM and a 128-bit authentication tag.
 - Use a fresh random 96-bit nonce from `crypto.getRandomValues()` for every encryption operation.
-- Store canonical-base64 ciphertext and nonce with algorithm, envelope version, and workspace key version.
-- Authenticate fixed envelope metadata as AES-GCM additional authenticated data.
+- Store canonical-base64 ciphertext and nonce with algorithm, envelope version, and workspace key
+  version.
+- Emit version 2 for new note/comment encryption. Construct AAD deterministically as UTF-8 JSON with
+  fixed array positions: note AAD is
+  `["cipherspace.note",2,"AES-GCM",1,workspace_id,note_id,local_revision]`; comment AAD is
+  `["cipherspace.comment",2,"AES-GCM",1,workspace_id,note_id,comment_id,author_id,parent_comment_id]`,
+  where the last value is `null` when there is no parent.
+- Require the same context during version 2 decryption. Accept version 1 only for backward-compatible
+  reads using its historical fixed class/format/algorithm/key-version AAD.
 - Strictly validate envelope fields, versions, base64 encodings, nonce length, and ciphertext size before decryption.
 
 Implemented local protection and sharing around those primitives:
@@ -251,7 +267,14 @@ Denial of service and oversized input:
 Malicious or compromised server:
 
 - v1 protects stored content from passive database access, but a malicious server could serve modified client code or malicious sync responses.
-- Mitigate partially with authenticated encryption and client-side validation.
+- Version 2 authenticated encryption prevents a server from moving ciphertext under different
+  workspace, note, local-revision, comment, author, or parent-thread metadata while keeping the
+  ciphertext valid. Client-side response checks also reject comments returned for a different
+  requested workspace/note.
+- Residual risk: the server remains authoritative for ordering and can omit data, replay a complete
+  envelope together with all of its original authenticated metadata, or roll a client back to an
+  older self-consistent state. CipherSpace has no signed transparency log or trusted monotonic
+  checkpoint that could prove freshness independently of the server.
 - Full protection against malicious client-code delivery is out of scope for v1.
 
 Compromised user device:
@@ -301,8 +324,14 @@ Conflict overwrite:
 - RSA-OAEP shares provide recipient confidentiality and context binding, not sender authentication. There are no sender signatures, device-to-device verification, key transparency, or fingerprints; a malicious server that substitutes a public key and serves modified client code can defeat the intended sharing flow.
 - The account password protects the local identity envelope, so browser-profile compromise permits offline password guessing. Recovery-kit possession also permits offline guessing of its independent passphrase; 600,000 PBKDF2 iterations do not compensate for a weak or reused passphrase. The kit is a sensitive portable bearer ciphertext and clipboard/download/storage providers may retain copies.
 - Losing both the private identity and recovery kit/passphrase prevents recovery. Generating a different key cannot decrypt existing shares, and v1 has no versioned identity replacement/re-sharing flow.
-- Version 1 authenticated metadata does not bind ciphertext to a workspace ID, note ID, or server version. A valid envelope can be replayed or swapped between notes that use the same workspace key unless a later integration adds and verifies contextual binding.
-- Comment envelope version 1 distinguishes comments from notes but does not bind ciphertext to a workspace ID, note ID, comment ID, parent ID, or author. A valid comment envelope can be replayed or swapped between comments using the same workspace key.
+- Legacy version 1 note envelopes do not bind a workspace ID, note ID, or revision; legacy version 1
+  comment envelopes do not bind a workspace ID, note ID, comment ID, parent ID, or author. They stay
+  readable to avoid breaking existing synced/local data, but remain replayable/swappable and are
+  clearly treated as weaker. New writes never emit version 1.
+- Version 2 prevents metadata substitution, not rollback of an entire self-consistent record. A
+  malicious server that replays ciphertext together with every original authenticated metadata
+  value may still make an old version appear current because clients do not maintain a signed or
+  otherwise server-independent freshness history.
 - Local note content is encrypted at rest with the workspace key, but note/workspace IDs, timestamps, revisions, statuses, ciphertext sizes, and other operational metadata are not hidden. This is browser-profile encryption, not hardware-backed storage or protection against code running in the unlocked origin.
 - The cached offline user profile can reopen device-local data during an outage even when the server cannot verify the current session. Server requests still require the HTTP-only cookie and backend authorization.
 - The auth limiter is per API process and in memory. Restarts clear it, multiple replicas do not share counters, and deployments must configure trusted proxy handling correctly before relying on forwarded client IPs.
@@ -313,7 +342,17 @@ Conflict overwrite:
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.
 - Comment drafts are not durable offline, and comments have no retry queue, version history, conflict detection, or sync protocol. A failed request requires the user to retry while the in-memory draft remains mounted.
 - The client stores encrypted local and remote snapshots, encrypted pending and resolved payloads, retry errors, cursors, unresolved/resolved conflict metadata, a password-protected workspace-key envelope, and a password-protected identity private-key envelope in the browser profile. It does not persist note plaintext, raw workspace keys, plaintext private identity keys, or passwords during normal operation.
-- Existing version 1–4 browser databases can contain legacy plaintext in note, pending-change, and conflict fields. Workspace open detects those fields before normal workspace routes render. The original workspace key must unlock an all-or-nothing migration: payload shapes are validated, existing envelopes are decrypted and compared when present, missing envelopes are created with the established AES-GCM note encryption, writes occur in one IndexedDB transaction, and a final scan verifies every plaintext field is `null`/absent. Any wrong-key, malformed, mismatched, or concurrently changed record remains untouched and keeps the workspace blocked. The UI never creates a replacement key. If safe migration is impossible, the user may explicitly confirm permanent deletion of every active note/queue/conflict record associated with the affected notes; CipherSpace never silently deletes or retains those records as normal workspace data. Comments are API-only and have no IndexedDB store in the current schema.
+- Existing version 1–4 browser databases can contain legacy plaintext in note, pending-change, and
+  conflict fields. Workspace open detects those fields before normal workspace routes render. The
+  original workspace key must unlock an all-or-nothing migration: payload shapes are validated,
+  existing envelopes are decrypted and compared when present, missing envelopes are created as
+  context-bound version 2 note envelopes, writes occur in one IndexedDB transaction, and a final
+  scan verifies every plaintext field is `null`/absent. Any wrong-key, malformed, mismatched, or
+  concurrently changed record remains untouched and keeps the workspace blocked. The UI never
+  creates a replacement key. If safe migration is impossible, the user may explicitly confirm
+  permanent deletion of every active note/queue/conflict record associated with the affected notes;
+  CipherSpace never silently deletes or retains those records as normal workspace data. Comments are
+  API-only and have no IndexedDB store in the current schema.
 
 ## Documentation Requirements For Future Changes
 

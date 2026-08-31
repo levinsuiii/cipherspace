@@ -72,9 +72,16 @@ afterEach(() => {
 
 describe("CommentSection", () => {
   it("decrypts listed comments and encrypts new comments before transport", async () => {
-    const existingInput = await encryptCommentForApi("Existing encrypted comment", null, workspaceKey);
+    const existingId = "70000000-0000-4000-8000-000000000001";
+    const existingInput = await encryptCommentForApi("Existing encrypted comment", {
+      authorId: "00000000-0000-4000-8000-000000000002",
+      commentId: existingId,
+      noteId,
+      parentCommentId: null,
+      workspaceId
+    }, workspaceKey);
     const existing = commentFromInput(
-      "70000000-0000-4000-8000-000000000001",
+      existingId,
       "00000000-0000-4000-8000-000000000002",
       existingInput
     );
@@ -93,7 +100,7 @@ describe("CommentSection", () => {
     const create = vi.spyOn(api.comments, "create").mockImplementation(
       async (_workspaceId, _noteId, input) => ({
         comment: commentFromInput(
-          "70000000-0000-4000-8000-000000000002",
+          input.id,
           "00000000-0000-4000-8000-000000000001",
           input
         )
@@ -114,11 +121,12 @@ describe("CommentSection", () => {
     expect(
       await decryptApiComment(
         commentFromInput(
-          "70000000-0000-4000-8000-000000000003",
+          transported.id,
           "00000000-0000-4000-8000-000000000001",
           transported
         ),
-        workspaceKey
+        workspaceKey,
+        { noteId, workspaceId }
       )
     ).toBe("New plaintext comment");
   });

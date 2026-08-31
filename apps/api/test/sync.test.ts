@@ -351,6 +351,18 @@ describe("encrypted note sync routes", () => {
     expect(syncRepository.versionCount(ids.note)).toBe(1);
   });
 
+  it("accepts context-bound version 2 note envelopes", async () => {
+    const create = change(ids.operationA, "create_note", null, 1);
+    create.encryptedPayload.envelopeVersion = 2;
+
+    const response = await push(ids.clientA, [create]);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      results: [{ status: "accepted", version: { encryptionMetadata: { envelopeVersion: 2 } } }]
+    });
+  });
+
   it("pulls workspace changes after an opaque cursor", async () => {
     await push(ids.clientA, [change(ids.operationA, "create_note", null, 1)]);
     const firstPull = await app.inject({

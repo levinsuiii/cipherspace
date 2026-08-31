@@ -231,7 +231,11 @@ describe("LocalNotesRepository", () => {
     expect(storedNote?.local_encrypted_payload).not.toBeNull();
     expect(storedChange?.encrypted_payload).not.toBeNull();
     await expect(
-      decryptLocalNotePayload(storedNote!.local_encrypted_payload!, key)
+      decryptLocalNotePayload(storedNote!.local_encrypted_payload!, key, {
+        localRevision: storedNote!.local_revision,
+        noteId: storedNote!.id,
+        workspaceId: storedNote!.workspace_id
+      })
     ).resolves.toEqual(legacyPayload);
     expect(JSON.stringify([storedNote, storedChange])).not.toContain("legacy secret");
   });
@@ -280,10 +284,18 @@ describe("LocalNotesRepository", () => {
     expect(stored?.local_note_payload).toBeNull();
     expect(stored?.resolved_note_payload).toBeNull();
     await expect(
-      decryptLocalNotePayload(stored!.local_encrypted_payload!, key)
+      decryptLocalNotePayload(stored!.local_encrypted_payload!, key, {
+        localRevision: conflict.local_revision,
+        noteId: conflict.note_id,
+        workspaceId: conflict.workspace_id
+      })
     ).resolves.toEqual(localPayload);
     await expect(
-      decryptLocalNotePayload(stored!.resolved_encrypted_payload!, key)
+      decryptLocalNotePayload(stored!.resolved_encrypted_payload!, key, {
+        localRevision: conflict.local_revision,
+        noteId: conflict.note_id,
+        workspaceId: conflict.workspace_id
+      })
     ).resolves.toEqual(resolvedPayload);
     expect(JSON.stringify(stored)).not.toContain("legacy local conflict");
     expect(JSON.stringify(stored)).not.toContain("legacy resolved conflict");
@@ -330,7 +342,11 @@ describe("LocalNotesRepository", () => {
     const note = await repository.createNote(workspaceId, payload, encrypted());
     const encryptionKey = await generateWorkspaceKey();
     const unlockKey = await generateWorkspaceKey();
-    const undecryptableEnvelope = await encryptLocalNotePayload(payload, encryptionKey);
+    const undecryptableEnvelope = await encryptLocalNotePayload(payload, encryptionKey, {
+      localRevision: note.local_revision,
+      noteId: note.id,
+      workspaceId: note.workspace_id
+    });
     await database.notes.update(note.key, {
       local_encrypted_payload: undecryptableEnvelope,
       local_note_payload: payload

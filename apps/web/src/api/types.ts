@@ -101,6 +101,7 @@ export interface CreateNoteInput {
   encryptedTitle?: string;
   encryptedTitleNonce?: string;
   encryptionMetadata: EncryptionMetadata;
+  id?: string;
 }
 
 export interface EncryptedComment {
@@ -121,6 +122,7 @@ export interface CreateCommentInput {
   contentNonce: string;
   encryptedContent: string;
   encryptionMetadata: EncryptionMetadata;
+  id: string;
   parentCommentId?: string | null;
 }
 
@@ -134,7 +136,7 @@ export type SyncOperationType = "create_note" | "delete_note" | "update_note";
 export interface SyncEncryptedPayload {
   algorithm: "AES-GCM";
   ciphertext: string;
-  envelopeVersion: 1;
+  envelopeVersion: 1 | 2;
   keyVersion: number;
   nonce: string;
 }

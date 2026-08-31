@@ -43,7 +43,7 @@ const encryptedPayloadSchema = z
   .object({
     algorithm: z.literal("AES-GCM"),
     ciphertext: aesGcmCiphertextSchema,
-    envelopeVersion: z.literal(1),
+    envelopeVersion: z.union([z.literal(1), z.literal(2)]),
     keyVersion: z.number().int().positive().max(32_767),
     nonce: aesGcmNonceSchema
   })

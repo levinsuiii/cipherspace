@@ -7,7 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
 import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
-import { decryptLocalNotePayload, encryptLocalNotePayload } from "../local-storage/notePayloadCrypto";
+import { decryptLocalNotePayload } from "../local-storage/notePayloadCrypto";
 import { queryKeys } from "../queryKeys";
 import { formatDate } from "../utils";
 
@@ -62,7 +62,11 @@ export function NotesPage() {
     void workspaceKey.getKey()
       .then(async (key) => Promise.all(notes.map(async (note) => {
         if (note.local_encrypted_payload) {
-          const payload = await decryptLocalNotePayload(note.local_encrypted_payload, key);
+          const payload = await decryptLocalNotePayload(note.local_encrypted_payload, key, {
+            localRevision: note.local_revision,
+            noteId: note.id,
+            workspaceId: note.workspace_id
+          });
           return [note.id, payload.title] as const;
         }
         if (note.local_note_payload) return [note.id, note.local_note_payload.title] as const;
@@ -95,8 +99,7 @@ export function NotesPage() {
     try {
       const payload = { body, title: trimmedTitle };
       const key = await workspaceKey.getKey();
-      const encryptedPayload = await encryptLocalNotePayload(payload, key);
-      const note = await localData.createNote(workspace.id, payload, encryptedPayload);
+      const note = await localData.createEncryptedNote(workspace.id, payload, key);
       navigate(`/workspaces/${workspace.id}/notes/${note.id}`);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : "Could not save the local note.");

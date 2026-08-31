@@ -30,11 +30,15 @@ function buildThread(comments: EncryptedComment[]): CommentNode[] {
 function DecryptedCommentBody({
   comment,
   getKey,
-  keyStatus
+  keyStatus,
+  noteId,
+  workspaceId
 }: {
   comment: EncryptedComment;
   getKey: () => Promise<CryptoKey>;
   keyStatus: WorkspaceKeyStatus;
+  noteId: string;
+  workspaceId: string;
 }) {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +49,11 @@ function DecryptedCommentBody({
     setError(null);
     if (comment.deletedAt || keyStatus !== "unlocked") return () => { active = false; };
     void getKey()
-      .then((key) => decryptApiComment(comment, key))
+      .then((key) => decryptApiComment(comment, key, { noteId, workspaceId }))
       .then((plaintext) => { if (active) setContent(plaintext); })
       .catch(() => { if (active) setError("This comment could not be decrypted."); });
     return () => { active = false; };
-  }, [comment, getKey, keyStatus]);
+  }, [comment, getKey, keyStatus, noteId, workspaceId]);
 
   if (comment.deletedAt) return <p className="comment-placeholder">Comment deleted.</p>;
   if (keyStatus !== "unlocked") {
@@ -68,11 +72,24 @@ interface CommentItemProps {
   memberNames: ReadonlyMap<string, string>;
   onDelete: (comment: EncryptedComment) => Promise<void>;
   onReply: (comment: EncryptedComment) => void;
+  noteId: string;
   role: WorkspaceRole;
+  workspaceId: string;
 }
 
 function CommentItem(props: CommentItemProps) {
-  const { comment, currentUserId, getKey, keyStatus, memberNames, onDelete, onReply, role } = props;
+  const {
+    comment,
+    currentUserId,
+    getKey,
+    keyStatus,
+    memberNames,
+    noteId,
+    onDelete,
+    onReply,
+    role,
+    workspaceId
+  } = props;
   const canDelete = !comment.deletedAt &&
     (role === "owner" || (role === "editor" && comment.authorId === currentUserId));
   const canReply = !comment.deletedAt && role !== "viewer";
@@ -86,7 +103,13 @@ function CommentItem(props: CommentItemProps) {
         <strong>{author}</strong>
         <time dateTime={comment.createdAt}>{formatDate(comment.createdAt)}</time>
       </header>
-      <DecryptedCommentBody comment={comment} getKey={getKey} keyStatus={keyStatus} />
+      <DecryptedCommentBody
+        comment={comment}
+        getKey={getKey}
+        keyStatus={keyStatus}
+        noteId={noteId}
+        workspaceId={workspaceId}
+      />
       {canReply || canDelete ? (
         <div className="comment-item__actions">
           {canReply ? <button onClick={() => onReply(comment)} type="button">Reply</button> : null}
@@ -171,7 +194,14 @@ export function CommentSection({
     setIsSubmitting(true);
     try {
       const key = await getKey();
-      const input = await encryptCommentForApi(content, replyTo?.id ?? null, key);
+      if (!user) throw new Error("Sign in again before creating a comment.");
+      const input = await encryptCommentForApi(content, {
+        authorId: user.id,
+        commentId: crypto.randomUUID(),
+        noteId,
+        parentCommentId: replyTo?.id ?? null,
+        workspaceId
+      }, key);
       const created = await api.comments.create(workspaceId, noteId, input);
       queryClient.setQueryData<{ comments: EncryptedComment[] }>(commentsKey, (current) => ({
         comments: [...(current?.comments ?? []), created.comment]
@@ -235,9 +265,11 @@ export function CommentSection({
             key={comment.id}
             keyStatus={keyStatus}
             memberNames={memberNames}
+            noteId={noteId}
             onDelete={handleDelete}
             onReply={setReplyTo}
             role={role}
+            workspaceId={workspaceId}
           />
         ))}
       </div>

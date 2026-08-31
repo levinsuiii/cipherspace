@@ -282,7 +282,10 @@ CipherSpace applies the following practical hardening controls:
 - Fastify logs request metadata but not bodies. Cookie, authorization, and `Set-Cookie` headers are explicitly redacted. Unexpected-error logging records only an error class, request ID, method, and route—not error messages or payloads.
 - Workspace, membership, note, version, comment, sync-push, and sync-pull operations enforce current membership. Viewers are read-only; owners and editors may create/update notes and comments; only owners delete notes or manage members; comment deletion follows the documented author/moderator rule.
 - Public identity registration accepts only validated RSA-3072 SPKI keys. Invitee-key lookup is owner-only, membership plus its first encrypted key share is atomic, and a member can retrieve only their own active share.
-- Note and comment API inputs must use the implemented version 1 AES-GCM envelope shape, including a 12-byte nonce, at least a 16-byte authenticated ciphertext/tag, canonical base64, and bounded fields. The server still cannot prove that submitted opaque bytes encrypt meaningful content.
+- Note and comment API inputs may use legacy version 1 or context-bound version 2 AES-GCM envelope
+  metadata, including a 12-byte nonce, at least a 16-byte authenticated ciphertext/tag, canonical
+  base64, and bounded fields. New clients write version 2. The server still cannot prove that
+  submitted opaque bytes encrypt meaningful content or contain the claimed AAD.
 - Locking removes the workspace key and clears note titles, editor values, comment drafts/content, and conflict/merge plaintext from rendered React state. Plaintext can still exist transiently in browser/runtime memory while unlocked and cannot be reliably zeroized as JavaScript strings.
 - Moving the page or installed PWA to the background triggers the same lock immediately. There is no visible-app inactivity timeout, and browsers may delay or terminate background lifecycle events; users should still select **Lock** before handing an unlocked device to someone else.
 - The service worker caches only static application files and a plaintext-free offline page. API/auth/sync/comment responses bypass it, and IndexedDB remains the encrypted local-note store. A compromised service worker or malicious delivered frontend would still run inside the trusted application origin and is outside v1's protection boundary.
@@ -393,7 +396,12 @@ then restart with `docker compose up --build`. This intentionally deletes local 
 6. After deletion, confirm the row remains as **Comment deleted** and its replies remain visible. The API response must contain `null` for ciphertext, nonce, and encryption metadata.
 7. Stop the API and confirm the discussion reports that comments require an online connection. Note drafts remain local-first, but comments are online-only in this slice.
 
-Comment bodies are encrypted in the browser with the unlocked AES-256-GCM workspace key and comment-specific authenticated metadata before upload. The backend stores only ciphertext, nonce, encryption metadata, authorship, parent linkage, and timestamps. Comment drafts exist only in React state until submitted; there is no offline queue, comment conflict handling, notification, or real-time delivery.
+Comment bodies are encrypted in the browser with the unlocked AES-256-GCM workspace key. Version 2
+AAD binds the content class, workspace, note, client-selected comment ID, authenticated author, and
+optional parent comment before upload. The backend stores only ciphertext, nonce, encryption
+metadata, authorship, parent linkage, and timestamps. Comment drafts exist only in React state until
+submitted; there is no offline queue, comment conflict handling, notification, or real-time
+delivery.
 
 ## Manual conflict-resolution check
 
@@ -417,7 +425,7 @@ await fetch(`/api/workspaces/${workspaceId}/notes/${noteId}/versions`, {
     encryptedContent: detail.latestVersion.encryptedContent,
     contentNonce: detail.latestVersion.contentNonce,
     encryptionMetadata: detail.latestVersion.encryptionMetadata,
-    clientVersion: "manual-remote-simulation"
+    clientVersion: detail.latestVersion.clientVersion
   })
 }).then(async (response) => ({ status: response.status, body: await response.json() }));
 ```
@@ -527,28 +535,30 @@ Non-members receive `404` for workspace-scoped reads, including key-share retrie
 
 The note API stores opaque, base64-encoded ciphertext and nonce values. CipherSpace does not encrypt, decrypt, or interpret note content on the server. The isolated `@cipherspace/crypto` package provides AES-256-GCM workspace-key generation, authenticated note/comment encryption, local password protection, RSA-OAEP user identities, recipient-specific workspace-key wrapping, and versioned encrypted identity recovery kits. The React workspace UI creates, shares, receives, or unlocks workspace keys and passes them to manual sync. Automated device pairing, identity replacement, rotation, and cryptographic revocation are not implemented.
 
-An optional title is stored as a ciphertext/nonce pair. Initial note content is stored as version 1. Every later version is immutable, receives a monotonically increasing server version number, and points to the version that was current when it was appended. `clientVersion` is optional revision metadata for future client and sync work; it is not currently an idempotency key or conflict check.
+An optional title is stored as a ciphertext/nonce pair. New note content uses envelope version 2;
+legacy version 1 content remains readable. Every later server version is immutable, receives a
+monotonically increasing version number, and points to the version that was current when it was
+appended. For version 2, `clientVersion` is the positive local revision authenticated in AAD. It is
+not the sync idempotency key or server conflict check.
 
 The examples below assume an authenticated cookie jar and a workspace ID from the workspace API:
 
 ```powershell
 $workspaceId = "00000000-0000-4000-8000-000000000000"
+$noteId = "30000000-0000-4000-8000-000000000001"
 
 # Create a note with an initial encrypted version
 curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
-  --data '{"encryptedTitle":"AAAAAAAAAAAAAAAAAAAAAA==","encryptedTitleNonce":"AAAAAAAAAAAAAAAA","encryptedContent":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","contentNonce":"AAAAAAAAAAAAAAAA","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"device-revision-1"}' `
+  --data '{"id":"30000000-0000-4000-8000-000000000001","encryptedTitle":"AAAAAAAAAAAAAAAAAAAAAA==","encryptedTitleNonce":"AAAAAAAAAAAAAAAA","encryptedContent":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","contentNonce":"AAAAAAAAAAAAAAAA","encryptionMetadata":{"envelopeVersion":2,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"1"}' `
   "http://localhost:3000/api/workspaces/$workspaceId/notes"
 
 # List active notes (metadata and encrypted titles, without content versions)
 curl.exe -i -b owner-cookies.txt `
   "http://localhost:3000/api/workspaces/$workspaceId/notes"
 
-# Copy the note id returned by the create request
-$noteId = "00000000-0000-4000-8000-000000000000"
-
 # Append a new encrypted version
 curl.exe -i -b owner-cookies.txt -H "Content-Type: application/json" `
-  --data '{"encryptedContent":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","contentNonce":"AQEBAQEBAQEBAQEB","encryptionMetadata":{"envelopeVersion":1,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"device-revision-2"}' `
+  --data '{"encryptedContent":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=","contentNonce":"AQEBAQEBAQEBAQEB","encryptionMetadata":{"envelopeVersion":2,"algorithm":"AES-GCM","keyId":"workspace-key-v1"},"clientVersion":"2"}' `
   "http://localhost:3000/api/workspaces/$workspaceId/notes/$noteId/versions"
 
 # Read version history in ascending version order
@@ -571,7 +581,11 @@ All endpoints require authentication. Workspace members may read active notes an
 
 ## Encrypted comment API
 
-Comments are scoped to active notes. Comment bodies use the existing workspace key with a comment-specific AES-256-GCM envelope; the API validates and stores only opaque base64 ciphertext, nonce, and encryption metadata. Optional `parentCommentId` links a reply to another comment on the same note.
+Comments are scoped to active notes. New comment bodies use the existing workspace key with a
+version 2 AES-256-GCM envelope bound to workspace, note, client-selected comment ID, authenticated
+author, and optional parent comment. The API validates and stores only opaque base64 ciphertext,
+nonce, and encryption metadata. Version 2 create requests include `id`; optional `parentCommentId`
+links a reply to another comment on the same note. Legacy version 1 comments remain readable.
 
 Supported comment endpoints are:
 

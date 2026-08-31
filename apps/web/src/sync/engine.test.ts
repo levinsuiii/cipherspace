@@ -10,7 +10,6 @@ import type {
   SyncPushResponse
 } from "../api/types";
 import { CipherSpaceLocalDatabase } from "../local-storage/database";
-import { encryptLocalNotePayload } from "../local-storage/notePayloadCrypto";
 import { LocalNotesRepository } from "../local-storage/repository";
 import type { LocalNotePayload } from "../local-storage/types";
 import { NoteSyncEngine, type SyncTransport } from "./engine";
@@ -90,19 +89,11 @@ describe("NoteSyncEngine", () => {
   });
 
   async function createLocal(payload: LocalNotePayload) {
-    return repository.createNote(
-      ids.workspace,
-      payload,
-      await encryptLocalNotePayload(payload, workspaceKey)
-    );
+    return repository.createEncryptedNote(ids.workspace, payload, workspaceKey);
   }
 
   async function editLocal(noteId: string, payload: LocalNotePayload) {
-    return repository.editNote(
-      noteId,
-      payload,
-      await encryptLocalNotePayload(payload, workspaceKey)
-    );
+    return repository.editEncryptedNote(noteId, payload, workspaceKey);
   }
 
   afterEach(async () => {

@@ -1,7 +1,8 @@
 import {
   decryptNoteContent,
   encryptNoteContent,
-  type EncryptedNotePayload
+  type EncryptedNotePayload,
+  type NoteEncryptionContext
 } from "@cipherspace/crypto";
 
 import type { LocalNotePayload, LocalNoteVersion } from "./types";
@@ -33,19 +34,22 @@ function parseNotePayload(plaintext: string): LocalNotePayload {
 
 export async function encryptLocalNotePayload(
   payload: LocalNotePayload,
-  workspaceKey: CryptoKey
+  workspaceKey: CryptoKey,
+  context: NoteEncryptionContext
 ): Promise<EncryptedNotePayload> {
   return encryptNoteContent(
     JSON.stringify({ body: payload.body, title: payload.title }),
-    workspaceKey
+    workspaceKey,
+    context
   );
 }
 
 export async function decryptLocalNotePayload(
   payload: EncryptedNotePayload,
-  workspaceKey: CryptoKey
+  workspaceKey: CryptoKey,
+  context?: NoteEncryptionContext
 ): Promise<LocalNotePayload> {
-  return parseNotePayload(await decryptNoteContent(payload, workspaceKey));
+  return parseNotePayload(await decryptNoteContent(payload, workspaceKey, context));
 }
 
 export async function decryptCachedNoteVersionPayload(
@@ -54,20 +58,36 @@ export async function decryptCachedNoteVersionPayload(
 ): Promise<LocalNotePayload> {
   if (
     version.encryption_algorithm !== "AES-GCM" ||
-    version.envelope_version !== 1 ||
+    (version.envelope_version !== 1 && version.envelope_version !== 2) ||
     version.key_id !== "workspace-key-v1"
   ) {
     throw new Error("The cached server version uses unsupported encryption metadata.");
+  }
+
+  const localRevision = Number(version.client_version);
+  if (
+    version.envelope_version === 2 &&
+    (!/^[1-9][0-9]*$/.test(version.client_version ?? "") ||
+      !Number.isSafeInteger(localRevision))
+  ) {
+    throw new Error("The cached version is missing its authenticated local revision.");
   }
 
   return decryptLocalNotePayload(
     {
       algorithm: "AES-GCM",
       ciphertext: version.encrypted_content,
-      envelopeVersion: 1,
+      envelopeVersion: version.envelope_version,
       keyVersion: 1,
       nonce: version.content_nonce
     },
-    workspaceKey
+    workspaceKey,
+    version.envelope_version === 2
+      ? {
+          localRevision,
+          noteId: version.note_id,
+          workspaceId: version.workspace_id
+        }
+      : undefined
   );
 }

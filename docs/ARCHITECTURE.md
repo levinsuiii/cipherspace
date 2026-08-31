@@ -168,19 +168,37 @@ Conflicted notes open a dedicated manual resolution route. It decrypts both pres
 
 The client note-mutation boundary prepares encrypted note and pending-operation envelopes through `@cipherspace/crypto`. The sync domain pushes those durable envelopes in order, pulls validated event pages, and commits remote cache changes and opaque cursors atomically. Retry metadata and encrypted conflict snapshots remain in IndexedDB. A workspace-level React provider supplies the UI with an unlocked in-memory key, and the workspace UI exposes explicit key creation/unlock plus manual sync.
 
-Local title/body payloads exist transiently in component memory and method arguments, but the durable note, pending-change, conflict, and resolved-conflict content fields use the existing version 1 AES-GCM note envelope. Workspace open scans notes, pending changes, and conflicts for legacy plaintext fields before rendering normal workspace routes. A mandatory gate keeps note, comment, conflict, and sync UI unavailable until the original workspace key is unlocked and an all-or-nothing migration has encrypted and verified every legacy payload, or the user explicitly confirms deletion of all active local records for the affected notes. Malformed records, envelope mismatches, wrong keys, and concurrent changes abort migration without overwriting the source records. Comments remain API-only and have no IndexedDB store to migrate. Locked UI renders placeholders rather than retained component plaintext.
+Local title/body payloads exist transiently in component memory and method arguments. New durable
+note, pending-change, conflict, and resolved-conflict content uses the context-bound version 2
+AES-GCM note envelope; existing version 1 envelopes remain readable as legacy data. Workspace open
+scans notes, pending changes, and conflicts for legacy plaintext fields before rendering normal
+workspace routes. A mandatory gate keeps note, comment, conflict, and sync UI unavailable until the
+original workspace key is unlocked and an all-or-nothing migration has encrypted and verified every
+legacy payload, or the user explicitly confirms deletion of all active local records for the
+affected notes. Missing envelopes created by that migration use version 2 with the record's
+workspace, note, and local-revision context. Malformed records, envelope mismatches, wrong keys, and
+concurrent changes abort migration without overwriting the source records. Comments remain API-only
+and have no IndexedDB store to migrate. Locked UI renders placeholders rather than retained
+component plaintext.
 
 ## Implemented Client Crypto Package
 
 `packages/crypto` is a browser-compatible TypeScript package built directly on the platform Web Crypto API. It is isolated from backend, transport, persistence, and UI logic and has no runtime dependencies.
 
-The implemented v1 primitives are:
+The implemented content primitives are:
 
 - Generate an extractable 256-bit AES-GCM workspace key with `encrypt` and `decrypt` usages.
 - Generate a fresh 96-bit nonce through `crypto.getRandomValues()` for every note encryption.
 - Encrypt and decrypt UTF-8 note content with AES-256-GCM and a 128-bit authentication tag.
-- Serialize ciphertext and nonces as canonical base64 in a strict envelope containing algorithm, envelope version, and workspace key version.
-- Authenticate the fixed envelope metadata as AES-GCM additional authenticated data.
+- Serialize ciphertext and nonces as canonical base64 in a strict envelope containing algorithm,
+  envelope version, and workspace key version.
+- Emit content envelope version 2 for new note/comment encryption. Its deterministic AAD is UTF-8
+  JSON with fixed array positions. Note AAD is
+  `["cipherspace.note",2,"AES-GCM",1,workspace_id,note_id,local_revision]`; comment AAD is
+  `["cipherspace.comment",2,"AES-GCM",1,workspace_id,note_id,comment_id,author_id,parent_comment_id]`,
+  with `null` representing no parent.
+- Require the identical immutable metadata for version 2 decryption. Keep version 1 readable through
+  its legacy fixed AAD, but never emit it for new encryption.
 - Export and import 32-byte raw workspace keys for a future key-wrapping flow. Raw exports are sensitive and must not be persisted or transmitted without wrapping.
 - Protect a workspace key locally with an independently chosen unlock password using PBKDF2-HMAC-SHA-256 with a random 128-bit salt and 600,000 iterations, then AES-256-GCM wrapping with a fresh 96-bit nonce and a 128-bit tag.
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
@@ -203,7 +221,13 @@ The implemented v1 primitives are:
 - Wrap the existing 32-byte workspace key directly with the recipient's RSA-OAEP public key. The standard OAEP label binds format version, workspace ID, recipient user ID, and recipient key version.
 - Unwrap key shares only in the recipient browser, then protect the recovered workspace key with that recipient's independently chosen local workspace unlock password.
 
-The package envelope is intentionally transport-independent. The frontend maps its `ciphertext` and `nonce` fields into the API's `encryptedContent` and `contentNonce` fields and supplies the fixed version 1 key identifier in `encryptionMetadata.keyId`; local IndexedDB records retain the package envelope directly.
+The package envelope is intentionally transport-independent. The frontend maps its `ciphertext` and
+`nonce` fields into the API's `encryptedContent` and `contentNonce` fields and supplies the workspace
+key identifier in `encryptionMetadata.keyId`; local IndexedDB records retain the package envelope
+directly. Sync persists the authenticated local revision as the note version's `clientVersion` so a
+pulled version can reconstruct version 2 AAD. Version 2 direct note/comment creates use client-chosen
+IDs because those identifiers must exist before encryption. The backend stores both envelope
+versions opaquely and does not construct or verify AAD.
 
 The workspace unlock password is separate from the account password and is never stored or sent to the backend. It derives only a local wrapping key; it is not used directly as note key material. The account password is also used locally to protect the user's identity private key after normal authentication, but neither the plaintext private key nor its protected local envelope is uploaded. Manual device transfer is available through the encrypted recovery kit; the kit is never uploaded and contains no workspace key or content. There is no automatic pairing, identity replacement, parameter migration, key rotation, or cryptographic revocation. Losing the identity, recovery kit/passphrase, or a workspace password/local-only data can still make ciphertext unavailable.
 
@@ -271,7 +295,10 @@ Sensitive local storage rules:
 - Use monotonically increasing per-note versions assigned by the server.
 - Use manual conflict resolution for divergent edits.
 - Keep comments note-scoped and online-only in this slice. Use optional same-note parent links for lightweight threads; do not add chat, notifications, presence, or real-time transport.
-- Encrypt comment bodies in the client with the existing workspace AES-GCM key and a comment-specific authenticated-data context. Store only opaque ciphertext envelopes on the backend.
+- Encrypt comment bodies in the client with the existing workspace AES-GCM key. Version 2 binds the
+  workspace, note, client-selected comment ID, authenticated author ID, and optional parent comment
+  ID in addition to the comment content class and envelope/key metadata. Store only opaque
+  ciphertext envelopes on the backend.
 - Preserve deleted comment identity and parent linkage while clearing ciphertext, nonce, and encryption metadata. Authors with owner/editor write roles can delete their own comments, and owners can moderate any comment.
 - Prefer explicit APIs and schemas over implicit transport conventions.
 - Use Argon2id for password hashing and database-backed opaque sessions in HTTP-only cookies. Store only a keyed HMAC digest of each session token, expire sessions after a configured lifetime, and invalidate the current session on logout.
@@ -283,7 +310,11 @@ Sensitive local storage rules:
 - Derive current workspace ownership from `workspace_members` rather than a single owner column. Serialize member-management mutations per workspace and prevent removal or downgrade of the final owner.
 - Store optional note titles as ciphertext/nonce pairs. The direct note API accepts opaque base64 envelopes and does not perform cryptography or plaintext processing.
 - Create an immutable initial version with each note, assign later versions monotonically increasing per-note numbers under a row lock, and set their parent to the version current at append time. Base-version conflict checks remain deferred to the sync protocol.
-- Use the platform Web Crypto API through the isolated `@cipherspace/crypto` package for AES-256-GCM note encryption. Version 1 envelopes use random 96-bit nonces, 128-bit tags, canonical base64, envelope version 1, and workspace key version 1.
+- Use the platform Web Crypto API through the isolated `@cipherspace/crypto` package for AES-256-GCM
+  note/comment encryption. Version 2 envelopes use random 96-bit nonces, 128-bit tags, canonical
+  base64, and workspace key version 1. AES-GCM AAD binds the immutable object context described
+  above. Version 1 stays read-only compatible and is explicitly weaker because it authenticates only
+  content class, envelope format, algorithm, and key version.
 - Keep raw workspace keys in caller-managed memory. Raw key import/export supports future wrapping but is not a persistence or sharing design.
 - For the local-only v1 unlock model, persist a versioned AES-GCM-protected workspace key in user-scoped IndexedDB. Derive its wrapping key with PBKDF2-HMAC-SHA-256, a random 128-bit salt, and 600,000 iterations; bind the user and workspace identifiers through authenticated additional data.
 - Require an explicit local unlock password after reload and expose manual sync only while the workspace key is unlocked. Do not reuse the account password or send protection material to the backend.

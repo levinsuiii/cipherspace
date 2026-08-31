@@ -9,6 +9,12 @@ import {
   unlockWorkspaceKey
 } from "../src/index.js";
 
+const noteContext = {
+  localRevision: 1,
+  noteId: "30000000-0000-4000-8000-000000000001",
+  workspaceId: "10000000-0000-4000-8000-000000000001"
+};
+
 const context = {
   userId: "00000000-0000-4000-8000-000000000001",
   workspaceId: "10000000-0000-4000-8000-000000000001"
@@ -18,7 +24,7 @@ const passphrase = "a durable local unlock password";
 describe("workspace key protection", () => {
   it("protects and unlocks the same workspace key", async () => {
     const workspaceKey = await generateWorkspaceKey();
-    const encryptedNote = await encryptNoteContent("survives reload", workspaceKey);
+    const encryptedNote = await encryptNoteContent("survives reload", workspaceKey, noteContext);
     const protectedKey = await protectWorkspaceKey(workspaceKey, passphrase, context);
 
     expect(protectedKey).toMatchObject({
@@ -30,7 +36,7 @@ describe("workspace key protection", () => {
       workspaceKeyLength: 256
     });
     const unlocked = await unlockWorkspaceKey(protectedKey, passphrase, context);
-    await expect(decryptNoteContent(encryptedNote, unlocked)).resolves.toBe("survives reload");
+    await expect(decryptNoteContent(encryptedNote, unlocked, noteContext)).resolves.toBe("survives reload");
   });
 
   it("uses fresh salt and nonce when protecting the same key", async () => {

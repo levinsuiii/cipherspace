@@ -41,6 +41,7 @@ const ids = {
   editor: "00000000-0000-4000-8000-000000000002",
   owner: "00000000-0000-4000-8000-000000000001",
   outsider: "00000000-0000-4000-8000-000000000004",
+  note: "30000000-0000-4000-8000-000000000001",
   viewer: "00000000-0000-4000-8000-000000000003",
   workspace: "10000000-0000-4000-8000-000000000001"
 };
@@ -291,6 +292,44 @@ describe("encrypted note routes", () => {
         workspaceId: ids.workspace
       }
     });
+  });
+
+  it("accepts version 2 note metadata with a client-selected note ID and local revision", async () => {
+    const response = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: {
+        ...notePayload,
+        clientVersion: "1",
+        encryptionMetadata: { ...notePayload.encryptionMetadata, envelopeVersion: 2 },
+        id: ids.note
+      },
+      url: `/api/workspaces/${ids.workspace}/notes`
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      latestVersion: {
+        clientVersion: "1",
+        encryptionMetadata: { envelopeVersion: 2 }
+      },
+      note: { id: ids.note }
+    });
+  });
+
+  it("rejects version 2 direct note creates without binding metadata", async () => {
+    const response = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: {
+        ...notePayload,
+        clientVersion: "device-revision-1",
+        encryptionMetadata: { ...notePayload.encryptionMetadata, envelopeVersion: 2 }
+      },
+      url: `/api/workspaces/${ids.workspace}/notes`
+    });
+
+    expect(response.statusCode).toBe(400);
   });
 
   it("denies note mutations to viewers", async () => {

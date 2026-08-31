@@ -13,6 +13,7 @@ export interface CreateCommentData {
   contentNonce: string;
   encryptedContent: string;
   encryptionMetadata: CommentEncryptionMetadata;
+  id?: string;
   parentCommentId?: string | null;
 }
 
@@ -91,7 +92,7 @@ export class CommentService {
       encryptedContent: Buffer.from(data.encryptedContent, "base64"),
       encryptionAlgorithm: data.encryptionMetadata.algorithm,
       envelopeVersion: data.encryptionMetadata.envelopeVersion,
-      id: randomUUID(),
+      id: data.id ?? randomUUID(),
       noteId,
       parentCommentId,
       workspaceId

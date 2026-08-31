@@ -14,6 +14,19 @@ import {
   type LocalUserCryptoIdentity
 } from "../src/index.js";
 
+const sharedNoteContext = {
+  localRevision: 1,
+  noteId: "30000000-0000-4000-8000-000000000001",
+  workspaceId: "10000000-0000-4000-8000-000000000001"
+};
+const sharedCommentContext = {
+  authorId: "20000000-0000-4000-8000-000000000001",
+  commentId: "40000000-0000-4000-8000-000000000001",
+  noteId: sharedNoteContext.noteId,
+  parentCommentId: null,
+  workspaceId: sharedNoteContext.workspaceId
+};
+
 const recipientId = "00000000-0000-4000-8000-000000000002";
 const wrongRecipientId = "00000000-0000-4000-8000-000000000003";
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -86,8 +99,12 @@ describe("user identity workspace-key sharing", () => {
 
   it("lets the recipient decrypt existing encrypted notes and comments with the shared key", async () => {
     const ownerKey = await generateWorkspaceKey();
-    const note = await encryptNoteContent("Existing owner note", ownerKey);
-    const comment = await encryptCommentContent("Existing encrypted comment", ownerKey);
+    const note = await encryptNoteContent("Existing owner note", ownerKey, sharedNoteContext);
+    const comment = await encryptCommentContent(
+      "Existing encrypted comment",
+      ownerKey,
+      sharedCommentContext
+    );
     const share = await wrapWorkspaceKeyForRecipient(ownerKey, recipient, {
       recipientKeyVersion: recipient.keyVersion,
       recipientUserId: recipientId,
@@ -101,8 +118,8 @@ describe("user identity workspace-key sharing", () => {
       recipientUserId: recipientId,
       workspaceId
     });
-    await expect(decryptNoteContent(note, recipientKey)).resolves.toBe("Existing owner note");
-    await expect(decryptCommentContent(comment, recipientKey)).resolves.toBe(
+    await expect(decryptNoteContent(note, recipientKey, sharedNoteContext)).resolves.toBe("Existing owner note");
+    await expect(decryptCommentContent(comment, recipientKey, sharedCommentContext)).resolves.toBe(
       "Existing encrypted comment"
     );
   });

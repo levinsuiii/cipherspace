@@ -2,22 +2,21 @@ import {
   AES_GCM_NONCE_LENGTH_BYTES,
   AES_GCM_TAG_LENGTH_BITS,
   AES_GCM_TAG_LENGTH_BYTES,
+  LEGACY_CONTENT_ENVELOPE_VERSION,
   MAX_NOTE_CIPHERTEXT_BYTES,
   NOTE_ENCRYPTION_ALGORITHM,
   NOTE_ENVELOPE_VERSION,
   WORKSPACE_KEY_VERSION
 } from "./constants.js";
+import { noteAdditionalData } from "./content-aad.js";
 import { decodeBase64, encodeBase64 } from "./encoding.js";
 import { CipherSpaceCryptoError } from "./errors.js";
-import type { EncryptedNotePayload } from "./types.js";
+import type { EncryptedNotePayload, NoteEncryptionContext } from "./types.js";
 import { assertWorkspaceKey } from "./workspace-key.js";
 
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 const PAYLOAD_KEYS = ["algorithm", "ciphertext", "envelopeVersion", "keyVersion", "nonce"];
-const AUTHENTICATED_METADATA = textEncoder.encode(
-  `cipherspace.note|${NOTE_ENVELOPE_VERSION}|${NOTE_ENCRYPTION_ALGORITHM}|${WORKSPACE_KEY_VERSION}`
-);
 
 export function generateNonce(): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(AES_GCM_NONCE_LENGTH_BYTES));
@@ -39,6 +38,7 @@ function assertPayloadObject(payload: unknown): asserts payload is Record<string
 
 function validatePayload(payload: unknown): {
   ciphertext: Uint8Array<ArrayBuffer>;
+  envelopeVersion: typeof LEGACY_CONTENT_ENVELOPE_VERSION | typeof NOTE_ENVELOPE_VERSION;
   nonce: Uint8Array<ArrayBuffer>;
 } {
   assertPayloadObject(payload);
@@ -46,7 +46,10 @@ function validatePayload(payload: unknown): {
   if (payload.algorithm !== NOTE_ENCRYPTION_ALGORITHM) {
     throw new CipherSpaceCryptoError("invalid_payload", "Unsupported note encryption algorithm.");
   }
-  if (payload.envelopeVersion !== NOTE_ENVELOPE_VERSION) {
+  if (
+    payload.envelopeVersion !== LEGACY_CONTENT_ENVELOPE_VERSION &&
+    payload.envelopeVersion !== NOTE_ENVELOPE_VERSION
+  ) {
     throw new CipherSpaceCryptoError("invalid_payload", "Unsupported note envelope version.");
   }
   if (payload.keyVersion !== WORKSPACE_KEY_VERSION) {
@@ -72,17 +75,19 @@ function validatePayload(payload: unknown): {
     );
   }
 
-  return { ciphertext, nonce };
+  return { ciphertext, envelopeVersion: payload.envelopeVersion, nonce };
 }
 
 export async function encryptNoteContent(
   plaintext: string,
-  key: CryptoKey
+  key: CryptoKey,
+  context: NoteEncryptionContext
 ): Promise<EncryptedNotePayload> {
   if (typeof plaintext !== "string") {
     throw new TypeError("plaintext must be a string.");
   }
   assertWorkspaceKey(key, "encrypt");
+  const additionalData = noteAdditionalData(NOTE_ENVELOPE_VERSION, context);
 
   const encodedPlaintext = textEncoder.encode(plaintext);
   if (encodedPlaintext.byteLength + AES_GCM_TAG_LENGTH_BYTES > MAX_NOTE_CIPHERTEXT_BYTES) {
@@ -99,7 +104,7 @@ export async function encryptNoteContent(
       {
         name: NOTE_ENCRYPTION_ALGORITHM,
         iv: nonce,
-        additionalData: AUTHENTICATED_METADATA,
+        additionalData,
         tagLength: AES_GCM_TAG_LENGTH_BITS
       },
       key,
@@ -122,16 +127,21 @@ export async function encryptNoteContent(
   }
 }
 
-export async function decryptNoteContent(payload: unknown, key: CryptoKey): Promise<string> {
+export async function decryptNoteContent(
+  payload: unknown,
+  key: CryptoKey,
+  context?: NoteEncryptionContext
+): Promise<string> {
   assertWorkspaceKey(key, "decrypt");
-  const { ciphertext, nonce } = validatePayload(payload);
+  const { ciphertext, envelopeVersion, nonce } = validatePayload(payload);
+  const additionalData = noteAdditionalData(envelopeVersion, context);
 
   try {
     const plaintextBuffer = await crypto.subtle.decrypt(
       {
         name: NOTE_ENCRYPTION_ALGORITHM,
         iv: nonce,
-        additionalData: AUTHENTICATED_METADATA,
+        additionalData,
         tagLength: AES_GCM_TAG_LENGTH_BITS
       },
       key,

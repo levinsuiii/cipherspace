@@ -14,7 +14,11 @@ export async function encryptPendingNoteChange(
   if (change.operation_type === "delete_note" || !change.local_note_payload) {
     throw new Error("Only note creates and updates have encryptable local payloads.");
   }
-  return encryptLocalNotePayload(change.local_note_payload, workspaceKey);
+  return encryptLocalNotePayload(change.local_note_payload, workspaceKey, {
+    localRevision: change.local_revision,
+    noteId: change.note_id,
+    workspaceId: change.workspace_id
+  });
 }
 
 export async function decryptCachedNoteVersion(

@@ -10,6 +10,12 @@ import {
   importWorkspaceKey
 } from "../src/index.js";
 
+const noteContext = {
+  localRevision: 1,
+  noteId: "30000000-0000-4000-8000-000000000001",
+  workspaceId: "10000000-0000-4000-8000-000000000001"
+};
+
 describe("workspace keys", () => {
   it("generates an extractable AES-256-GCM workspace key", async () => {
     const key = await generateWorkspaceKey();
@@ -25,10 +31,10 @@ describe("workspace keys", () => {
     const originalKey = await generateWorkspaceKey();
     const exportedKey = await exportWorkspaceKey(originalKey);
     const importedKey = await importWorkspaceKey(exportedKey);
-    const payload = await encryptNoteContent("portable key material", originalKey);
+    const payload = await encryptNoteContent("portable key material", originalKey, noteContext);
 
     expect(atob(exportedKey)).toHaveLength(32);
-    await expect(decryptNoteContent(payload, importedKey)).resolves.toBe("portable key material");
+    await expect(decryptNoteContent(payload, importedKey, noteContext)).resolves.toBe("portable key material");
   });
 
   it.each(["not base64", "AQIDBA==", ""])("rejects malformed exported key material", async (value) => {

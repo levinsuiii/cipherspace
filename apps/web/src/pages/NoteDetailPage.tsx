@@ -9,8 +9,7 @@ import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import {
-  decryptLocalNotePayload,
-  encryptLocalNotePayload
+  decryptLocalNotePayload
 } from "../local-storage/notePayloadCrypto";
 import type { LocalNotePayload } from "../local-storage/types";
 import { queryKeys } from "../queryKeys";
@@ -82,7 +81,11 @@ export function NoteDetailPage() {
     void workspaceKey.getKey()
       .then(async (key) => {
         if (note.local_encrypted_payload) {
-          return decryptLocalNotePayload(note.local_encrypted_payload, key);
+          return decryptLocalNotePayload(note.local_encrypted_payload, key, {
+            localRevision: note.local_revision,
+            noteId: note.id,
+            workspaceId: note.workspace_id
+          });
         }
         if (note.local_note_payload) return note.local_note_payload;
         if (latestVersion) return decryptCachedNoteVersion(latestVersion, key);
@@ -134,8 +137,7 @@ export function NoteDetailPage() {
     try {
       const payload = { body, title: trimmedTitle };
       const key = await workspaceKey.getKey();
-      const encryptedPayload = await encryptLocalNotePayload(payload, key);
-      await localData.editNote(note.id, payload, encryptedPayload);
+      await localData.editEncryptedNote(note.id, payload, key);
       setSaveMessage("Saved locally. This change is queued for sync.");
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save the local note.");

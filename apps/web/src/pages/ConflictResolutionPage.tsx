@@ -6,8 +6,7 @@ import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import {
-  decryptLocalNotePayload,
-  encryptLocalNotePayload
+  decryptLocalNotePayload
 } from "../local-storage/notePayloadCrypto";
 import type {
   ConflictResolution,
@@ -79,7 +78,11 @@ export function ConflictResolutionPage() {
     void workspaceKey.getKey()
       .then(async (key) => {
         const local = conflict.local_encrypted_payload
-          ? await decryptLocalNotePayload(conflict.local_encrypted_payload, key)
+          ? await decryptLocalNotePayload(conflict.local_encrypted_payload, key, {
+              localRevision: conflict.local_revision,
+              noteId: conflict.note_id,
+              workspaceId: conflict.workspace_id
+            })
           : conflict.local_note_payload;
         const remote = await decryptCachedNoteVersion(conflict.remote_version, key);
         return { local, remote };
@@ -112,22 +115,28 @@ export function ConflictResolutionPage() {
       const key = await workspaceKey.getKey();
       if (resolution === "keep_local") {
         if (!localPayload) throw new Error("Unlock and decrypt the local version first.");
-        const encrypted = await encryptLocalNotePayload(localPayload, key);
-        await localData.resolveConflict(conflict.id, { action: "keep_local" }, encrypted);
+        await localData.resolveEncryptedConflict(
+          conflict.id,
+          { action: "keep_local" },
+          localPayload,
+          key
+        );
       } else if (resolution === "accept_remote") {
         if (!remotePayload) throw new Error("Unlock and decrypt the remote version first.");
-        const encrypted = await encryptLocalNotePayload(remotePayload, key);
-        await localData.resolveConflict(conflict.id, {
-          action: "accept_remote",
-          remote_payload: remotePayload
-        }, encrypted);
+        await localData.resolveEncryptedConflict(
+          conflict.id,
+          { action: "accept_remote", remote_payload: remotePayload },
+          remotePayload,
+          key
+        );
       } else {
         if (!mergedPayload) throw new Error("Enter the merged note content first.");
-        const encrypted = await encryptLocalNotePayload(mergedPayload, key);
-        await localData.resolveConflict(conflict.id, {
-          action: "manual_merge",
-          merged_payload: mergedPayload
-        }, encrypted);
+        await localData.resolveEncryptedConflict(
+          conflict.id,
+          { action: "manual_merge", merged_payload: mergedPayload },
+          mergedPayload,
+          key
+        );
       }
       setResolvedWith(resolution);
     } catch (error) {

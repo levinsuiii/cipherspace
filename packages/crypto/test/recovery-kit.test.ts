@@ -13,6 +13,12 @@ import {
   type EncryptedUserRecoveryKit,
   type LocalUserCryptoIdentity
 } from "../src/index.js";
+
+const sharedNoteContext = {
+  localRevision: 1,
+  noteId: "30000000-0000-4000-8000-000000000001",
+  workspaceId: "10000000-0000-4000-8000-000000000001"
+};
 import { encodeBase64 } from "../src/encoding.js";
 import { decryptProtectedUserPrivateKeyBytes } from "../src/user-identity.js";
 
@@ -96,7 +102,7 @@ describe("encrypted user recovery kits", () => {
 
   it("lets the restored identity decrypt an existing workspace key share", async () => {
     const workspaceKey = await generateWorkspaceKey();
-    const note = await encryptNoteContent("existing shared note", workspaceKey);
+    const note = await encryptNoteContent("existing shared note", workspaceKey, sharedNoteContext);
     const share = await wrapWorkspaceKeyForRecipient(workspaceKey, identity, {
       recipientKeyVersion: identity.keyVersion,
       recipientUserId: userId,
@@ -117,7 +123,7 @@ describe("encrypted user recovery kits", () => {
       workspaceId
     });
 
-    await expect(decryptNoteContent(note, restoredWorkspaceKey)).resolves.toBe(
+    await expect(decryptNoteContent(note, restoredWorkspaceKey, sharedNoteContext)).resolves.toBe(
       "existing shared note"
     );
   });

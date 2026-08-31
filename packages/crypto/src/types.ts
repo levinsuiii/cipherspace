@@ -1,4 +1,5 @@
 import {
+  LEGACY_CONTENT_ENVELOPE_VERSION,
   NOTE_ENCRYPTION_ALGORITHM,
   NOTE_ENVELOPE_VERSION,
   USER_IDENTITY_ALGORITHM,
@@ -11,7 +12,9 @@ import {
 export interface EncryptedNotePayload {
   algorithm: typeof NOTE_ENCRYPTION_ALGORITHM;
   ciphertext: string;
-  envelopeVersion: typeof NOTE_ENVELOPE_VERSION;
+  envelopeVersion:
+    | typeof LEGACY_CONTENT_ENVELOPE_VERSION
+    | typeof NOTE_ENVELOPE_VERSION;
   keyVersion: typeof WORKSPACE_KEY_VERSION;
   nonce: string;
 }
@@ -20,9 +23,25 @@ export interface EncryptedNotePayload {
 export interface EncryptedCommentPayload {
   algorithm: typeof NOTE_ENCRYPTION_ALGORITHM;
   ciphertext: string;
-  envelopeVersion: typeof NOTE_ENVELOPE_VERSION;
+  envelopeVersion:
+    | typeof LEGACY_CONTENT_ENVELOPE_VERSION
+    | typeof NOTE_ENVELOPE_VERSION;
   keyVersion: typeof WORKSPACE_KEY_VERSION;
   nonce: string;
+}
+
+export interface NoteEncryptionContext {
+  localRevision: number;
+  noteId: string;
+  workspaceId: string;
+}
+
+export interface CommentEncryptionContext {
+  authorId: string;
+  commentId: string;
+  noteId: string;
+  parentCommentId: string | null;
+  workspaceId: string;
 }
 
 export type CryptoErrorCode =

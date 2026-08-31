@@ -12,8 +12,7 @@ const mocks = vi.hoisted(() => ({
   decryptLocal: vi.fn(),
   decryptRemote: vi.fn(),
   deleteNote: vi.fn(async () => undefined),
-  editNote: vi.fn(async () => undefined),
-  encryptLocal: vi.fn(),
+  editEncryptedNote: vi.fn(async () => undefined),
   getKey: vi.fn(async () => ({}) as CryptoKey),
   getServerNote: vi.fn(async () => ({} as EncryptedNoteDetail)),
   note: null as LocalNote | null,
@@ -39,7 +38,7 @@ vi.mock("../local-storage/LocalDataContext", () => ({
     countConflictsForNote: () => 0,
     countPendingChangesForNote: () => 0,
     deleteNote: mocks.deleteNote,
-    editNote: mocks.editNote,
+    editEncryptedNote: mocks.editEncryptedNote,
     getLatestVersion: () => mocks.version,
     getNote: () => mocks.note
   }),
@@ -51,8 +50,7 @@ vi.mock("../sync/crypto", () => ({
 }));
 
 vi.mock("../local-storage/notePayloadCrypto", () => ({
-  decryptLocalNotePayload: mocks.decryptLocal,
-  encryptLocalNotePayload: mocks.encryptLocal
+  decryptLocalNotePayload: mocks.decryptLocal
 }));
 
 const workspaceId = "10000000-0000-4000-8000-000000000001";
@@ -91,15 +89,7 @@ beforeEach(() => {
   mocks.decryptLocal.mockReset();
   mocks.decryptRemote.mockReset();
   mocks.deleteNote.mockClear();
-  mocks.editNote.mockClear();
-  mocks.encryptLocal.mockReset();
-  mocks.encryptLocal.mockResolvedValue({
-    algorithm: "AES-GCM",
-    ciphertext: "encrypted",
-    envelopeVersion: 1,
-    keyVersion: 1,
-    nonce: "nonce"
-  });
+  mocks.editEncryptedNote.mockClear();
   mocks.getKey.mockClear();
   mocks.getServerNote.mockClear();
   mocks.status = "unlocked";
@@ -159,7 +149,8 @@ describe("NoteDetailPage decryption", () => {
     expect(screen.getByDisplayValue("Local secret body")).toBeInTheDocument();
     expect(mocks.decryptLocal).toHaveBeenCalledWith(
       mocks.note!.local_encrypted_payload,
-      expect.anything()
+      expect.anything(),
+      { localRevision: 0, noteId, workspaceId }
     );
     expect(mocks.decryptRemote).not.toHaveBeenCalled();
   });
@@ -178,10 +169,10 @@ describe("NoteDetailPage decryption", () => {
     expect(mocks.decryptRemote).toHaveBeenCalledWith(mocks.version, expect.anything());
 
     fireEvent.click(screen.getByRole("button", { name: "Save local change" }));
-    await waitFor(() => expect(mocks.editNote).toHaveBeenCalledWith(
+    await waitFor(() => expect(mocks.editEncryptedNote).toHaveBeenCalledWith(
       noteId,
       { body: "Readable server body", title: "Readable server title" },
-      expect.objectContaining({ ciphertext: "encrypted" })
+      expect.anything()
     ));
   });
 

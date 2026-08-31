@@ -25,6 +25,7 @@ export interface EncryptedVersionData {
 export interface CreateEncryptedNoteData extends EncryptedVersionData {
   encryptedTitle?: string | null;
   encryptedTitleNonce?: string | null;
+  id?: string;
 }
 
 export interface EncryptedNote {
@@ -129,7 +130,7 @@ export class NoteService {
       encryptedTitleNonce: data.encryptedTitleNonce
         ? Buffer.from(data.encryptedTitleNonce, "base64")
         : null,
-      id: randomUUID(),
+      id: data.id ?? randomUUID(),
       syncChangeId: randomUUID(),
       userId,
       version: storedVersion(userId, data),

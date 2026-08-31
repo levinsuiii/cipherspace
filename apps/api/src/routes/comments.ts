@@ -52,13 +52,22 @@ const createCommentBodySchema = z
     encryptionMetadata: z
       .object({
         algorithm: z.literal("AES-GCM"),
-        envelopeVersion: z.literal(1),
+        envelopeVersion: z.union([z.literal(1), z.literal(2)]),
         keyId: z.string().trim().min(1).max(255).regex(/^[A-Za-z0-9._:-]+$/)
       })
       .strict(),
+    id: z.string().uuid().optional(),
     parentCommentId: z.string().uuid().nullable().optional()
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.encryptionMetadata.envelopeVersion === 2 && !value.id) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Version 2 comment envelopes require a client-selected comment ID."
+      });
+    }
+  });
 
 interface CommentRouteOptions {
   authService: AuthService;
