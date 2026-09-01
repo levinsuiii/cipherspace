@@ -1,6 +1,8 @@
 # Threat Model
 
-CipherSpace v1 aims to protect note content from routine server-side plaintext access while staying honest about metadata, account, device, and collaboration limitations. It should not be described as perfect or enterprise-grade end-to-end encryption.
+CipherSpace is a private beta and has not been independently security audited. Notes and comments are encrypted in the browser before upload, and the backend stores their ciphertext envelopes and operational metadata rather than plaintext content.
+
+The current model mainly protects note and comment content against passive backend or database inspection. It does not provide strong protection against an actively malicious hosting operator, backend, or frontend delivery path: those components can substitute public keys, serve modified client code, omit or replay data, or otherwise attack an unlocked client. CipherSpace should not be described as perfect or enterprise-grade end-to-end encryption.
 
 ## Current Implementation Boundary
 
@@ -59,8 +61,8 @@ The browser stores the last successfully verified user profile in local storage 
 
 ## Security Goals
 
-- Encrypt note content on the client before upload.
-- Keep plaintext note bodies out of backend logs, database rows, and server-side processing.
+- Encrypt note and comment content on the client before upload.
+- Keep plaintext note bodies and comments out of backend logs, database rows, and server-side processing.
 - Prevent users from accessing workspaces and notes unless authorized.
 - Preserve integrity of encrypted note versions through authenticated encryption.
 - Make sync conflict handling explicit rather than silently overwriting data.
@@ -149,7 +151,7 @@ Implemented local protection and sharing around those primitives:
 
 Not yet implemented: automatic device pairing, identity replacement/version migration, key rotation, cryptographic revocation, device verification, or protected-key parameter migration.
 
-The package exposes raw workspace-key import and export only as a building block for future wrapping. Raw exported keys provide full decryption capability and must not be stored or transmitted unwrapped.
+The package exposes raw workspace-key import and export for the implemented recipient-specific wrapping and local-protection flows. Raw exported keys provide full decryption capability and must not be stored or transmitted unwrapped.
 
 Password handling:
 
@@ -157,7 +159,7 @@ Password handling:
 - Do not store plaintext passwords or password-equivalent secrets.
 - Accept passwords from 12 through 128 characters and normalize account emails to lowercase.
 - Return the same login error for unknown emails and incorrect passwords; perform an Argon2 verification in both cases to reduce account-enumeration timing differences.
-- Keep the local unlock password separate from the account password. It is never sent to the backend and has no recovery flow.
+- Keep the local unlock password separate from the account password. It is never sent to the backend. The recovery kit restores the identity used to retrieve server-held workspace-key shares on another browser or device; it does not recover a forgotten local workspace password in place.
 - Derive only the local wrapping key with PBKDF2-HMAC-SHA-256, a per-envelope random 128-bit salt, and 600,000 iterations; never use the password directly as a workspace content key.
 
 Session handling:
@@ -286,7 +288,7 @@ Compromised user device:
 
 Lost password:
 
-- The v1 protected workspace key has no recovery path. Losing the local unlock password or deleting the browser profile can make already-synced ciphertext unrecoverable from this client.
+- Losing the local unlock password makes that browser's protected workspace-key envelope unusable. A matching recovery kit can restore the user's identity on another browser or device so server-held workspace-key shares can be retrieved, but it cannot restore unsynced local-only data or the forgotten local password itself.
 - A previously exported recovery kit can restore the matching identity after browser-data loss and
   let the user retrieve server-held workspace key shares. It does not restore unsynced local data,
   a forgotten account password, or a forgotten local workspace password in place.
@@ -315,9 +317,9 @@ Conflict overwrite:
 - v1 does not provide real-time collaborative editing integrity guarantees.
 - v1 does not protect against malicious browser extensions, compromised devices, or a malicious deployed frontend bundle.
 - v1 does not provide searchable encrypted note bodies on the server.
-- v1 does not include formal cryptographic review.
+- CipherSpace has not been independently security audited or cryptographically reviewed.
 - The implemented package does not prevent nonce reuse by callers that bypass `encryptNoteContent()` and invoke Web Crypto directly with the same workspace key.
-- Workspace keys are extractable to enable future wrapping. An XSS payload, malicious browser extension, compromised device, or malicious frontend bundle running in the unlocked client context can access plaintext and key material.
+- Workspace keys are extractable for recipient-specific wrapping. An XSS payload, malicious browser extension, compromised device, or malicious frontend bundle running in the unlocked client context can access plaintext and key material.
 - Protected workspace and identity envelopes live in ordinary IndexedDB rather than hardware-backed storage. Background lifecycle events lock the app, but browsers may delay or skip events during abrupt termination and there is no inactivity timeout while the document remains visible. Recovery is a manual encrypted-file workflow; automatic device pairing, identity replacement, key rotation, parameter migration, and cryptographic revocation remain absent.
 - The service worker's offline behavior is a static-shell fallback, not protected offline authentication, background sync, or offline comments. A browser that has not completed one successful production load may show only the plaintext-free offline page.
 - The workspace unlock password is independent of both the owner's password and the recipient's account password. Creating a replacement workspace key cannot decrypt existing ciphertext, so the UI refuses initialization for existing/shared workspaces without an available share.
@@ -337,6 +339,7 @@ Conflict overwrite:
 - The auth limiter is per API process and in memory. Restarts clear it, multiple replicas do not share counters, and deployments must configure trusted proxy handling correctly before relying on forwarded client IPs.
 - Exact-origin CORS and security headers reduce browser attack surface but do not authorize requests or protect against non-browser clients, compromised same-origin scripts, or malicious frontend delivery.
 - The separate free-provider deployment requires `SameSite=None`; browser third-party-cookie controls may block login persistence, and logout CSRF remains possible without an explicit CSRF token. Same-origin deployments retain the stricter default.
+- The documented free-tier private-beta deployment has cold starts, provider storage/compute/build quotas, ephemeral API filesystems, and no SLA. Provider limits and policies may change.
 - Production secret validation rejects documented placeholder markers but cannot measure true entropy or prevent an operator from supplying another predictable 32-byte value.
 - The API container is hardened for the local Compose topology, but PostgreSQL and Nginx remain ordinary containers rather than a complete production sandbox. Loopback port binding is a local default, not a network firewall policy for production orchestration.
 - Sync operation IDs, client IDs, base versions, request timing, ciphertext sizes, and workspace sequence positions are server-visible metadata.

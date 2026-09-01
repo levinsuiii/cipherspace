@@ -1,6 +1,10 @@
 # CipherSpace
 
-CipherSpace is a local-first encrypted collaboration workspace. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, RSA-OAEP recipient-specific workspace-key sharing, encrypted immutable note versions, encrypted note-scoped comments and replies, an isolated client crypto package, and the first push/pull note sync protocol.
+CipherSpace is a local-first encrypted collaboration workspace currently in private beta. The current implementation contains a React/TypeScript frontend with durable IndexedDB note storage, a TypeScript/Fastify API, PostgreSQL persistence and migrations, email/password authentication with database-backed sessions, workspace membership management, RSA-OAEP recipient-specific workspace-key sharing, encrypted immutable note versions, encrypted note-scoped comments and replies, manual encrypted identity recovery for another browser or device, an isolated client crypto package, and the first push/pull note sync protocol.
+
+Notes and comments are encrypted in the browser before upload; the backend stores their ciphertext and operational metadata, not their plaintext content. CipherSpace has not been independently security audited. Its current security model mainly reduces exposure to passive backend or database inspection. It does not provide strong protection against an actively malicious hosting operator, backend, or frontend delivery path that can substitute public keys or serve modified client code.
+
+Important private-beta limitations include no key transparency, no strong protection against substituted public keys, and no cryptographic revocation after member removal. Removed members may retain keys or data they previously obtained. CipherSpace also cannot guarantee confidentiality on a compromised device or against malicious browser extensions, and JavaScript cannot perfectly clear plaintext or keys from memory. The documented free-tier deployment has cold starts, provider quotas, ephemeral API filesystems, and no SLA.
 
 ## Prerequisites
 
@@ -172,7 +176,7 @@ to server-held workspace key shares, but it does not restore unsynced local data
 15. After deployment, add CipherSpace to an Android/iOS home screen and repeat the core flow,
     including backgrounding the app and unlocking again.
 
-## Free public-beta deployment
+## Free private-beta deployment
 
 The documented no-cost path uses a Neon Free Postgres database, a Render Free API web service, and a Cloudflare Pages static frontend. Provider HTTPS and generated provider subdomains are sufficient; a custom domain is not required. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact setup, environment variables, migration behavior, health checks, browser verification, and current free-tier limitations.
 
@@ -294,7 +298,7 @@ CipherSpace applies the following practical hardening controls:
 
 `SESSION_SECRET` must be at least 32 UTF-8 bytes. Production rejects documented placeholder/development markers and requires a cryptographically random value. `DATABASE_URL` and optional `MIGRATIONS_DATABASE_URL` must be PostgreSQL URLs. Pool size, proxy trust, cookie policy, body limits, auth rate limits, ports, log level, session lifetime, CORS origins, and bind addresses are all represented in `.env.example` and validated or consumed explicitly.
 
-Important limitations remain: this is not formally reviewed or enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; recovery is a manual encrypted-file backup rather than server escrow or device pairing; and there is no key rotation, cryptographic revocation, key transparency, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter. Removing a member cannot erase data or keys already obtained. A malicious server can substitute public keys or deliver modified client code, and an extension, same-origin script, compromised recovery file/passphrase, or compromised unlocked device can access key material and plaintext. See `docs/THREAT_MODEL.md` for the complete boundary.
+Important limitations remain: this private beta has not been independently security audited and is not enterprise-grade E2EE; metadata remains visible; workspace keys are extractable and browser-profile protected; recovery is a manual encrypted-file backup rather than server escrow or automatic device pairing; and there is no key rotation, cryptographic revocation, key transparency, MFA, email verification, password reset, CSRF token, automatic session cleanup, or shared multi-instance limiter. Removing a member cannot erase data or keys already obtained. A malicious server can substitute public keys or deliver modified client code, and an extension, same-origin script, compromised recovery file/passphrase, or compromised unlocked device can access key material and plaintext. JavaScript cannot guarantee complete clearing of plaintext or keys from runtime memory. See `docs/THREAT_MODEL.md` for the complete boundary.
 
 ## Manual two-user encrypted-sharing test
 
@@ -376,7 +380,7 @@ then restart with `docker compose up --build`. This intentionally deletes local 
 3. Enter the account password and select **Create encryption identity**. Confirm the page recommends **Export recovery kit** and enables workspace creation.
 4. Create a workspace and confirm its overview shows the current account as an owner.
 5. Open **Notes** and confirm the empty state appears.
-6. In the workspace sync panel, choose a separate local unlock password of 12–128 characters and select **Create and unlock key**. Keep that password available; v1 has no recovery.
+6. In the workspace sync panel, choose a separate local unlock password of 12–128 characters and select **Create and unlock key**. Keep that password available: the encrypted recovery kit can restore the identity used to retrieve server-held key shares on another browser or device, but it cannot recover a forgotten local workspace password or unsynced local-only data.
 7. Create a local note with a title and body. Confirm the editor and workspace header show unsynced changes and sync status `idle`.
 8. Select **Sync**. Confirm the status changes through `syncing` to `synced` and the unsynced count drops (normally to zero). The backend stores only ciphertext and metadata.
 9. Edit the note again and confirm the unsynced indicator returns. Select **Sync** again to push the next encrypted version.
@@ -405,7 +409,7 @@ delivery.
 
 ## Manual conflict-resolution check
 
-This flow uses the authenticated browser console to append a second immutable server version that reuses the note's existing encrypted envelope. It simulates another writer without exposing plaintext to the backend and works despite multi-device workspace-key sharing not being implemented yet.
+This flow uses the authenticated browser console to append a second immutable server version that reuses the note's existing encrypted envelope. It simulates another writer without exposing plaintext to the backend; the separate two-user test above covers the implemented encrypted workspace-key sharing flow.
 
 1. Start the app with Docker Compose, log in, open a workspace, create or unlock its local key, create a note, and sync it.
 2. Keep the note page open. Its URL contains the workspace and note IDs.

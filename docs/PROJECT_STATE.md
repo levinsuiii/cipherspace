@@ -1,6 +1,6 @@
 # Project State
 
-CipherSpace now has a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, recipient-specific end-to-end encrypted workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, local workspace lock/unlock, encrypted identity recovery-kit export/import, manual sync, manual note-edit conflict resolution, and configuration for a no-cost public-beta deployment. Automated device pairing, identity replacement, rotation, cryptographic revocation, automatic merging, and offline comment sync remain separate future work.
+CipherSpace is a private beta with a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, recipient-specific end-to-end encrypted workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, local workspace lock/unlock, encrypted identity recovery-kit export/import, manual sync, manual note-edit conflict resolution, and configuration for a no-cost private-beta deployment. Automated device pairing, identity replacement, rotation, cryptographic revocation, automatic merging, and offline comment sync remain separate future work.
 
 ## Current Status
 
@@ -207,18 +207,18 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 ## Known Limitations
 
 - Initial authentication still requires the API. After a user has been verified once, the cached profile can reopen that user's local workspace/note data during an outage; this does not establish server authorization.
-- Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
+- Notes and comments are encrypted client-side before upload, and the backend stores ciphertext envelopes rather than plaintext content. Local note titles and bodies, pending create/update payloads, and conflict-resolution content are encrypted in IndexedDB. Operational metadata and ciphertext sizes remain visible, and ciphertext remains in the browser profile after logout.
 - Browser databases created by older releases can still contain plaintext before the user handles the mandatory workspace gate. Until then, normal workspace routes remain blocked. Successful migration removes the legacy plaintext fields; explicit cleanup permanently loses unsynced/local-only data for affected notes, while encrypted server versions can be downloaded again.
-- Workspace lock removes the unwrapped key from memory and hides readable note UI state. Backgrounding or hiding the app locks immediately, but there is no inactivity timeout while the app stays visible, hardware-backed key storage, or local ciphertext cleanup on logout. Recovery kits restore the identity used to retrieve server-held shares, not currently unlocked workspace keys or unsynced local-only data.
+- Workspace lock removes the unwrapped key from memory and hides readable note UI state. Backgrounding or hiding the app locks immediately, but there is no inactivity timeout while the app stays visible, hardware-backed key storage, or local ciphertext cleanup on logout. JavaScript cannot perfectly clear plaintext or keys from runtime memory, and CipherSpace cannot guarantee confidentiality on compromised devices or against malicious browser extensions. Recovery kits restore the identity used to retrieve server-held shares, not currently unlocked workspace keys, forgotten local workspace passwords, or unsynced local-only data.
 - PWA installation requires a secure context in deployment. Provider/browser install UI and cross-site-cookie behavior vary, and the service worker offers static-shell navigation fallback rather than background sync or offline comments.
 - The frontend has focused API-client and auth-state unit coverage but no automated browser end-to-end coverage yet.
 - Authentication is intentionally basic: there is no email verification, password reset/recovery, breached-password check, MFA, multi-session listing/revocation, or automatic expired-session cleanup. Rate limiting is per-process memory rather than a shared distributed store.
-- The free public-beta topology uses cross-site provider domains and therefore `SameSite=None`. Browser third-party-cookie controls may still block sessions, and the relaxed cookie policy leaves logout CSRF as a documented residual risk; exact credentialed CORS and JSON/preflight boundaries must not be loosened.
+- The free private-beta topology uses cross-site provider domains and therefore `SameSite=None`. Browser third-party-cookie controls may still block sessions, and the relaxed cookie policy leaves logout CSRF as a documented residual risk; exact credentialed CORS and JSON/preflight boundaries must not be loosened.
 - Free hosting has cold starts, storage/compute/build limits, ephemeral API filesystems, and no SLA. Provider quotas and policies can change after this documentation is published.
 - Authorization is implemented for workspace, membership, note, note-version, comment, and sync endpoints. Non-members receive workspace-not-found responses.
 - Push/pull, retry state, cursor advancement, idempotency, conflict detection, local key unlock, manual sync, and manual note-edit conflict resolution are implemented. Automatic scheduling and automatic merging are not.
 - The editor never directly submits its plaintext payload, and note endpoints cannot verify that callers encrypted meaningful plaintext correctly.
-- A recipient can provision the same workspace key on another browser after importing a matching encrypted recovery kit. Automatic pairing, server escrow, account-password recovery, identity replacement, parameter migration, rotation, revocation, and cryptographic deletion are absent.
+- A recipient can provision the same workspace key on another browser after importing a matching encrypted recovery kit. There is no key transparency or strong protection against substituted public keys. Automatic pairing, server escrow, account-password recovery, identity replacement, parameter migration, rotation, cryptographic revocation, and cryptographic deletion are absent; removing a member cannot erase old keys or data already retained by that member.
 - Losing the account password, local workspace password, both the private identity and usable recovery kit, or unsynced browser data can still make ciphertext/data unrecoverable. A newly generated identity cannot decrypt shares made for the lost key.
 - Direct version appends still parent to the current version and do not perform sync base checks or idempotency. They now emit pull events; clients requiring conflict protection must mutate through the sync endpoint.
 - Soft-deleted note ciphertext and history remain stored and are not available through normal note endpoints. Restore, purge, and cryptographic deletion are not implemented.
@@ -230,7 +230,9 @@ The backend, frontend foundation, local persistence, client crypto, first sync p
 - Authentication, local encryption, identity generation, recovery export/import, wrong-passphrase
   and malformed-kit failure, non-overwrite behavior, recovered-identity workspace-share decryption,
   wrapping/unwrapping, context-bound note/comment decryption, ciphertext-swap rejection, public-key
-  APIs, key-share authorization, and role regressions have automated coverage. The design has not
-  received an independent security or cryptographic review.
+  APIs, key-share authorization, and role regressions have automated coverage. The private-beta
+  design has not received an independent security audit or cryptographic review. Its current model
+  mainly protects against passive backend or database inspection, not actively malicious hosting,
+  backend behavior, or frontend delivery.
 - v1 intentionally accepts metadata leakage described in `docs/THREAT_MODEL.md`.
 

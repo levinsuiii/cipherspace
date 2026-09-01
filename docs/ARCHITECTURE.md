@@ -24,7 +24,9 @@ Recommended high-level components:
 - Backend persistence: PostgreSQL.
 - Shared package: TypeScript domain types, API contracts, and Zod schemas shared by frontend and backend.
 
-The frontend must be able to create and edit notes while offline. The backend is the synchronization authority for workspace membership, version ordering, encrypted note envelopes, and conflict reporting, but it must not require plaintext note content.
+The frontend must be able to create and edit notes while offline. Notes and comments are encrypted client-side, and the backend stores ciphertext envelopes and operational metadata without plaintext content. The backend is the synchronization authority for workspace membership, version ordering, encrypted note envelopes, and conflict reporting.
+
+This private-beta architecture mainly limits exposure from passive backend or database inspection. It is not independently security audited and does not strongly protect against malicious frontend delivery, substituted public keys, compromised devices or browser extensions, or sensitive values that JavaScript cannot perfectly clear from memory.
 
 ## Recommended Repository Layout
 
@@ -199,7 +201,7 @@ The implemented content primitives are:
   with `null` representing no parent.
 - Require the identical immutable metadata for version 2 decryption. Keep version 1 readable through
   its legacy fixed AAD, but never emit it for new encryption.
-- Export and import 32-byte raw workspace keys for a future key-wrapping flow. Raw exports are sensitive and must not be persisted or transmitted without wrapping.
+- Export and import 32-byte raw workspace keys for recipient-specific key wrapping and local protection. Raw exports are sensitive and must not be persisted or transmitted without wrapping.
 - Protect a workspace key locally with an independently chosen unlock password using PBKDF2-HMAC-SHA-256 with a random 128-bit salt and 600,000 iterations, then AES-256-GCM wrapping with a fresh 96-bit nonce and a 128-bit tag.
 - Authenticate the protection format, user ID, and workspace ID as wrapping additional data. Persist only the versioned protected-key envelope in IndexedDB and keep the unwrapped `CryptoKey` in memory.
 - Reject malformed, unsupported, oversized, or unauthenticated envelopes before returning plaintext. Wrong keys and authentication failures use the same safe error boundary.
@@ -315,8 +317,8 @@ Sensitive local storage rules:
   base64, and workspace key version 1. AES-GCM AAD binds the immutable object context described
   above. Version 1 stays read-only compatible and is explicitly weaker because it authenticates only
   content class, envelope format, algorithm, and key version.
-- Keep raw workspace keys in caller-managed memory. Raw key import/export supports future wrapping but is not a persistence or sharing design.
-- For the local-only v1 unlock model, persist a versioned AES-GCM-protected workspace key in user-scoped IndexedDB. Derive its wrapping key with PBKDF2-HMAC-SHA-256, a random 128-bit salt, and 600,000 iterations; bind the user and workspace identifiers through authenticated additional data.
+- Keep raw workspace keys in caller-managed memory. Raw key import/export supports the implemented wrapping operations but is not itself a persistence format or complete sharing protocol.
+- For local workspace-key protection, persist a versioned AES-GCM-protected workspace key in user-scoped IndexedDB. Derive its wrapping key with PBKDF2-HMAC-SHA-256, a random 128-bit salt, and 600,000 iterations; bind the user and workspace identifiers through authenticated additional data.
 - Require an explicit local unlock password after reload and expose manual sync only while the workspace key is unlocked. Do not reuse the account password or send protection material to the backend.
 - Scope IndexedDB records by user ID and commit local note state and its pending mutation atomically.
 - Encrypt local create/edit and conflict-resolution content before committing it to IndexedDB; reuse the resulting envelope for sync.

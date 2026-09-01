@@ -1,4 +1,4 @@
-# Free Public-Beta Deployment
+# Free Private-Beta Deployment
 
 This guide deploys CipherSpace at no cost with three replaceable services:
 
@@ -8,7 +8,9 @@ This guide deploys CipherSpace at no cost with three replaceable services:
 
 The providers supply HTTPS and generated subdomains, so v1 does not need a custom domain. The guide reflects provider documentation checked on 2026-08-21. Free plans change; review the linked provider pages before each deployment.
 
-This is a friends-and-family beta topology, not a production SLA. It includes the responsive installable web app, but does not add billing, native mobile apps, recovery, key rotation, or multi-user key sharing.
+This is a private-beta topology, not a production SLA. It includes the responsive installable web app, recipient-specific multi-user workspace-key sharing, and manual encrypted identity recovery for another browser or device. It does not add billing, native mobile apps, automatic device pairing, key rotation, or cryptographic revocation.
+
+Notes and comments are encrypted in the browser before upload, and the backend stores their ciphertext plus operational metadata rather than plaintext content. CipherSpace has not been independently security audited. This model mainly protects against passive backend or database inspection; it does not strongly protect against an actively malicious hosting provider, backend, or frontend delivery path that can substitute public keys or serve modified client code.
 
 ## Production topology
 
@@ -175,7 +177,7 @@ Repeat a preflight using an unapproved origin and confirm that `Access-Control-A
 
 The `SameSite=None` setting relaxes the default CSRF boundary for this provider-domain topology. Exact credentialed CORS, JSON mutation bodies, and strict preflights protect normal API mutations, but logout CSRF and browser third-party-cookie restrictions remain documented limitations. Do not loosen CORS to work around a cookie problem.
 
-## 8. Public-beta functional checklist
+## 8. Private-beta functional checklist
 
 Use a clean browser profile and complete this flow over the deployed HTTPS URLs:
 
@@ -208,7 +210,9 @@ Do not use Render's Free Postgres for persistent beta data without accepting its
 
 ## Before inviting friends
 
-Deployment readiness does not remove product limitations. In particular, CipherSpace still has no member/device workspace-key sharing. Adding another user to a workspace authorizes ciphertext access but does not provision the key needed to decrypt existing content. Until key sharing is implemented and reviewed, treat the public beta as single-user workspaces or controlled same-browser demonstrations, not genuine encrypted multi-user collaboration.
+Deployment readiness does not remove product limitations. Multi-user encrypted workspace-key sharing and manual recovery-kit transfer are implemented: an owner encrypts the workspace key for an existing user's registered public key, and that user can restore the same identity on another browser or device with an exported recovery kit. This private beta still has no key transparency or strong protection against substituted public keys, and it has no cryptographic revocation after member removal. Removed members may retain old keys, ciphertext, or plaintext they already obtained.
+
+Do not treat the hosted frontend as independent of the security boundary. Modified same-origin code, a compromised device or browser extension, or an actively malicious hosting path can access plaintext and keys while the workspace is unlocked. JavaScript cannot perfectly clear sensitive values from runtime memory. The free-tier services also have cold starts, quotas, ephemeral API filesystems, and no SLA, as detailed above.
 
 Also complete these operational checks:
 
