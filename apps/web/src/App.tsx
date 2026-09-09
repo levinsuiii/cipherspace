@@ -9,6 +9,7 @@ import { ConflictResolutionPage } from "./pages/ConflictResolutionPage";
 import { NoteDetailPage } from "./pages/NoteDetailPage";
 import { NotesPage } from "./pages/NotesPage";
 import { LandingPage } from "./pages/LandingPage";
+import { HelpPage } from "./pages/HelpPage";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
 
@@ -16,6 +17,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/hilfe" element={<HelpPage />} />
       <Route element={<PublicOnlyRoute />}>
         <Route path="/login" element={<AuthPage mode="login" />} />
         <Route path="/register" element={<AuthPage mode="register" />} />

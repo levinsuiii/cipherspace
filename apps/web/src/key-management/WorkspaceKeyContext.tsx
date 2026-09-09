@@ -27,7 +27,7 @@ export class WorkspaceLockedError extends Error {
 }
 
 const backgroundLockMessage =
-  "CipherSpace locked because the app moved to the background. Return to the app and unlock again.";
+  "CipherSpace wurde gesperrt, weil die Anwendung in den Hintergrund gewechselt ist. Kehre zur Anwendung zurück und entsperre den Workspace erneut.";
 
 interface WorkspaceKeyContextValue {
   create(workspaceId: string, passphrase: string): Promise<void>;

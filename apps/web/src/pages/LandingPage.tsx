@@ -11,6 +11,7 @@ export function LandingPage() {
         <nav aria-label="Seitennavigation">
           <a href="#arbeitsweise">Arbeitsweise</a>
           <a href="#projekt">Projekt</a>
+          <Link className="public-help-link" to="/hilfe">Kurzanleitung</Link>
           <Link className="button button--quiet" to="/login">Anmelden</Link>
         </nav>
       </header>

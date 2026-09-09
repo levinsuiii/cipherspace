@@ -21,6 +21,7 @@ describe("LandingPage", () => {
       "href",
       "/register"
     );
+    expect(screen.getByRole("link", { name: "Kurzanleitung" })).toHaveAttribute("href", "/hilfe");
     expect(screen.getByText(/nicht unabhängig sicherheitsgeprüft/)).toBeInTheDocument();
     expect(screen.getByText(/Metadaten wie Workspace-Namen/)).toBeInTheDocument();
   });

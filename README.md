@@ -37,6 +37,11 @@ Note and comment encryption and decryption happen in the browser. The API valida
 
 The component boundaries and data model are described in [Architecture](docs/ARCHITECTURE.md). The note synchronization rules are documented in [Sync Protocol](docs/SYNC_PROTOCOL.md).
 
+## Nutzung
+
+Eine kurze Anleitung zur Bedienung befindet sich unter
+[docs/NUTZUNGSANLEITUNG.md](docs/NUTZUNGSANLEITUNG.md).
+
 ## Security model
 
 New note and comment content uses AES-256-GCM envelopes created through the Web Crypto API. Each workspace has a symmetric key; for multi-user access, the client wraps that key separately for each recipient using the recipient's registered RSA-OAEP-3072 public key. Private identity keys and workspace keys are protected locally before IndexedDB persistence.

@@ -324,6 +324,17 @@ summary { display: flex; min-height: 2.75rem; align-items: center; padding: 0.75
 .text-link { display: inline-flex; min-height: 2.75rem; align-items: center; gap: 0.75rem; color: var(--accent); font-size: 0.85rem; text-decoration: none; }
 .public-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 2rem 0; border-top: 1px solid var(--border); color: #6f817a; font-family: "DM Mono", monospace; font-size: 0.65rem; text-transform: uppercase; }
 
+.help-header { max-width: 48rem; padding: clamp(4rem, 9vw, 7rem) 0; }
+.help-header h1 { margin-bottom: 1.25rem; font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 520; letter-spacing: -0.055em; }
+.help-header > p:last-child { max-width: 42rem; margin-bottom: 0; font-size: 1.05rem; line-height: 1.7; }
+.help-steps { margin: 0; padding: 0; border-bottom: 1px solid var(--border); list-style: none; }
+.help-steps li { display: grid; grid-template-columns: 4rem minmax(0, 1fr); gap: 0; padding: 1.75rem 0; border-top: 1px solid var(--border); }
+.help-step-number { padding-top: 0.25rem; color: #5f716a; font-family: "DM Mono", monospace; font-size: 0.65rem; }
+.help-steps h2 { margin: 0 0 0.55rem; font-size: 1.2rem; }
+.help-steps p { max-width: 52rem; margin: 0; line-height: 1.7; }
+.help-note { max-width: 52rem; padding: clamp(3rem, 7vw, 5rem) 0; }
+.help-note p { margin-bottom: 1.5rem; line-height: 1.7; }
+
 @media (max-width: 860px) {
   .landing-hero { min-height: auto; grid-template-columns: 1fr; padding: 5rem 0; }
   .document-study { width: min(100%, 32rem); }
@@ -342,6 +353,11 @@ summary { display: flex; min-height: 2.75rem; align-items: center; padding: 0.75
   .public-nav { min-height: 4.5rem; }
   .public-nav nav { gap: 0.5rem; }
   .public-nav nav > a:not(.button) { display: none; }
+  .public-nav nav > a.public-help-link { display: inline-flex; }
+  .help-page .public-nav nav > a:not(.button) { display: inline-flex; }
+  .help-header { padding: 3.5rem 0; }
+  .help-header h1 { font-size: clamp(2.65rem, 13vw, 4rem); }
+  .help-steps li { grid-template-columns: 2.5rem minmax(0, 1fr); padding: 1.4rem 0; }
   .landing-hero { gap: 3.5rem; padding: 4rem 0 5rem; }
   .landing-hero h1 { font-size: clamp(2.65rem, 13vw, 4rem); }
   .landing-actions { display: grid; grid-template-columns: 1fr; }
