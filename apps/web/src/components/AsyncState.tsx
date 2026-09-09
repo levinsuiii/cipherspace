@@ -4,7 +4,7 @@ interface ErrorStateProps {
   title?: string;
 }
 
-export function LoadingState({ label = "Loading…" }: { label?: string }) {
+export function LoadingState({ label = "Wird geladen…" }: { label?: string }) {
   return (
     <div className="state-card" role="status">
       <span className="spinner" aria-hidden="true" />
@@ -13,8 +13,8 @@ export function LoadingState({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-export function ErrorState({ error, onRetry, title = "Something went wrong" }: ErrorStateProps) {
-  const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+export function ErrorState({ error, onRetry, title = "Etwas ist schiefgelaufen" }: ErrorStateProps) {
+  const message = error instanceof Error ? error.message : "Ein unerwarteter Fehler ist aufgetreten.";
 
   return (
     <div className="state-card state-card--error" role="alert">
@@ -24,7 +24,7 @@ export function ErrorState({ error, onRetry, title = "Something went wrong" }: E
       </div>
       {onRetry ? (
         <button className="button button--secondary" onClick={onRetry} type="button">
-          Try again
+          Erneut versuchen
         </button>
       ) : null}
     </div>
@@ -40,7 +40,7 @@ export function EmptyState({
 }) {
   return (
     <div className="empty-state">
-      <span aria-hidden="true">◇</span>
+      <span aria-hidden="true">□</span>
       <strong>{title}</strong>
       <p>{description}</p>
     </div>

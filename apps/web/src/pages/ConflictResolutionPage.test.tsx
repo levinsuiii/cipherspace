@@ -117,9 +117,9 @@ describe("ConflictResolutionPage", () => {
     const first = renderPage();
     expect(await screen.findByText("Local title")).toBeInTheDocument();
     expect(await screen.findByText("Remote title")).toBeInTheDocument();
-    expect(screen.getByText("Base version")).toBeInTheDocument();
+    expect(screen.getByText("Basisversion")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Keep local" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lokal beibehalten" }));
     await waitFor(() =>
       expect(mocks.resolveEncryptedConflict).toHaveBeenCalledWith(
         "conflict-id",
@@ -133,7 +133,7 @@ describe("ConflictResolutionPage", () => {
     mocks.resolveEncryptedConflict.mockClear();
     renderPage();
     await screen.findByText("Remote title");
-    fireEvent.click(screen.getByRole("button", { name: "Accept remote" }));
+    fireEvent.click(screen.getByRole("button", { name: "Serverfassung übernehmen" }));
     await waitFor(() =>
       expect(mocks.resolveEncryptedConflict).toHaveBeenCalledWith(
         "conflict-id",
@@ -150,9 +150,9 @@ describe("ConflictResolutionPage", () => {
   it("submits user-edited manual merge content", async () => {
     renderPage();
     await screen.findByText("Remote title");
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Merged title" } });
-    fireEvent.change(screen.getByLabelText("Note body"), { target: { value: "Merged body" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save manual merge" }));
+    fireEvent.change(screen.getByLabelText("Titel"), { target: { value: "Merged title" } });
+    fireEvent.change(screen.getByLabelText("Inhalt"), { target: { value: "Merged body" } });
+    fireEvent.click(screen.getByRole("button", { name: "Zusammenführung speichern" }));
 
     await waitFor(() =>
       expect(mocks.resolveEncryptedConflict).toHaveBeenCalledWith(
@@ -177,7 +177,7 @@ describe("ConflictResolutionPage", () => {
 
     expect(screen.queryByText("Local title")).not.toBeInTheDocument();
     expect(screen.queryByText("Remote title")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Title")).toHaveValue("");
-    expect(screen.getByLabelText("Note body")).toHaveValue("");
+    expect(screen.getByLabelText("Titel")).toHaveValue("");
+    expect(screen.getByLabelText("Inhalt")).toHaveValue("");
   });
 });

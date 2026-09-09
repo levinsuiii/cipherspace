@@ -70,7 +70,7 @@ export function NotesPage() {
           return [note.id, payload.title] as const;
         }
         if (note.local_note_payload) return [note.id, note.local_note_payload.title] as const;
-        return [note.id, "Encrypted note"] as const;
+        return [note.id, "Verschlüsselte Notiz"] as const;
       })))
       .then((entries) => {
         if (active) setDecryptedTitles(new Map(entries));
@@ -102,7 +102,7 @@ export function NotesPage() {
       const note = await localData.createEncryptedNote(workspace.id, payload, key);
       navigate(`/workspaces/${workspace.id}/notes/${note.id}`);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Could not save the local note.");
+      setFormError(error instanceof Error ? error.message : "Die Notiz konnte nicht lokal gespeichert werden.");
       setIsCreating(false);
     }
   };
@@ -112,26 +112,26 @@ export function NotesPage() {
       <section>
         <div className="section-heading section-heading--page">
           <div>
-            <p className="eyebrow">Local-first notes</p>
-            <h2>Notes</h2>
+            <p className="eyebrow">Lokal gespeicherte Inhalte</p>
+            <h2>Notizen</h2>
           </div>
           <div className="status-badges">
             {(conflictsQuery.data?.length ?? 0) > 0 ? (
-              <span className="conflict-badge">{conflictsQuery.data?.length} conflicts</span>
+              <span className="conflict-badge">{conflictsQuery.data?.length} Konflikte</span>
             ) : null}
             {(pendingChangesQuery.data?.length ?? 0) > 0 ? (
-              <span className="unsynced-badge">{pendingChangesQuery.data?.length} unsynced</span>
+              <span className="unsynced-badge">{pendingChangesQuery.data?.length} ausstehend</span>
             ) : null}
             <span className="count-badge">{notes.length}</span>
           </div>
         </div>
         {serverNotesQuery.isError && notes.length > 0 ? (
           <div className="offline-callout" role="status">
-            Offline cache in use. You can keep creating and editing notes; changes remain queued on
-            this device.
+            Der lokale Speicher wird verwendet. Du kannst weiterarbeiten; Änderungen bleiben auf
+            diesem Gerät vorgemerkt.
           </div>
         ) : null}
-        {localNotesQuery.isLoading ? <LoadingState label="Loading local notes…" /> : null}
+        {localNotesQuery.isLoading ? <LoadingState label="Lokale Notizen werden geladen…" /> : null}
         {localNotesQuery.error ? <ErrorState error={localNotesQuery.error} /> : null}
         {serverNotesQuery.isError && notes.length === 0 ? (
           <ErrorState error={serverNotesQuery.error} onRetry={() => void serverNotesQuery.refetch()} />
@@ -141,16 +141,16 @@ export function NotesPage() {
         notes.length === 0 &&
         !serverNotesQuery.isError ? (
           <EmptyState
-            description={canCreate ? "Create the first note. It will be stored locally before any future sync." : "No notes are cached for this workspace."}
-            title="No notes yet"
+            description={canCreate ? "Erstelle die erste Notiz. Sie wird vor jeder Synchronisation lokal gespeichert." : "Für diesen Workspace sind keine Notizen gespeichert."}
+            title="Noch keine Notiz vorhanden"
           />
         ) : null}
         {notes.length ? (
           <div className="note-list">
             {notes.map((note, index) => {
               const titleLabel = workspaceKey.status === "unlocked"
-                ? decryptedTitles.get(note.id) ?? "Encrypted note"
-                : "Encrypted note";
+                ? decryptedTitles.get(note.id) ?? "Verschlüsselte Notiz"
+                : "Verschlüsselte Notiz";
               const pendingCount = pendingByNote.get(note.id) ?? 0;
               const conflictCount = conflictsByNote.get(note.id) ?? 0;
               return (
@@ -161,12 +161,12 @@ export function NotesPage() {
                   <div className="note-index">{String(index + 1).padStart(2, "0")}</div>
                   <div>
                     <h3>{titleLabel}</h3>
-                    <p>Updated {formatDate(note.updated_at)}</p>
+                    <p>Aktualisiert am {formatDate(note.updated_at)}</p>
                   </div>
                   {conflictCount > 0 ? (
-                    <span className="conflict-badge">Conflict</span>
+                    <span className="conflict-badge">Konflikt</span>
                   ) : pendingCount > 0 ? (
-                    <span className="unsynced-badge">Unsynced</span>
+                    <span className="unsynced-badge">Ausstehend</span>
                   ) : (
                     <span className="mono note-id">{note.id.slice(0, 8)}</span>
                   )}
@@ -180,36 +180,36 @@ export function NotesPage() {
       <aside className="panel panel--sticky">
         {canCreate ? (
           <>
-            <p className="eyebrow">Saved on this device</p>
-            <h2>Create a local note</h2>
+            <p className="eyebrow">Auf diesem Gerät</p>
+            <h2>Notiz erstellen</h2>
             <div className="info-callout">
-              Notes are encrypted before they are saved on this device. Unlock the workspace key
-              to create and read notes; sync uploads the same encrypted envelope.
+              Notizen werden verschlüsselt gespeichert. Zum Schreiben und Lesen muss der
+              Workspace-Schlüssel entsperrt sein.
             </div>
             {workspaceKey.status !== "unlocked" ? (
               <div className="warning-callout" role="status">
-                Unlock or create the workspace key above before writing a note.
+                Entsperre oder erstelle oben den Workspace-Schlüssel, bevor du schreibst.
               </div>
             ) : null}
             <form className="form-stack" onSubmit={(event) => void handleCreate(event)}>
               <label>
-                Title
+                Titel
                 <input
                   autoFocus
                   disabled={workspaceKey.status !== "unlocked"}
                   maxLength={200}
                   onChange={(event) => setTitle(event.target.value)}
-                  placeholder="Untitled note"
+                  placeholder="Unbenannte Notiz"
                   required
                   value={title}
                 />
               </label>
               <label>
-                Note body
+                Inhalt
                 <textarea
                   disabled={workspaceKey.status !== "unlocked"}
                   onChange={(event) => setBody(event.target.value)}
-                  placeholder="Write locally…"
+                  placeholder="Lokal schreiben…"
                   rows={10}
                   value={body}
                 />
@@ -218,15 +218,15 @@ export function NotesPage() {
               <button className="button button--primary" disabled={
                 isCreating || !title.trim() || workspaceKey.status !== "unlocked"
               }>
-                {isCreating ? "Saving locally…" : "Create local note"}
+                {isCreating ? "Wird lokal gespeichert…" : "Notiz erstellen"}
               </button>
             </form>
           </>
         ) : (
           <>
-            <p className="eyebrow">Read-only access</p>
-            <h2>Viewer role</h2>
-            <p>You can read cached notes, but only owners and editors can create local changes.</p>
+            <p className="eyebrow">Nur lesen</p>
+            <h2>Leser-Rolle</h2>
+            <p>Du kannst gespeicherte Notizen lesen. Änderungen sind Besitzern und Editoren vorbehalten.</p>
           </>
         )}
       </aside>

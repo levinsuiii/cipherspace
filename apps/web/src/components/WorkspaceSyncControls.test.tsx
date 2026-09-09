@@ -24,27 +24,27 @@ describe("WorkspaceSyncControls", () => {
     const controls = props();
     render(<WorkspaceSyncControls {...controls} />);
 
-    expect(screen.getByText("2 local changes ready to sync.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+    expect(screen.getByText("2 lokale Änderungen warten auf den Abgleich.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Synchronisieren" }));
 
     await waitFor(() => expect(controls.onSync).toHaveBeenCalledOnce());
-    expect(await screen.findByText("synced")).toBeInTheDocument();
+    expect(await screen.findByText("aktuell")).toBeInTheDocument();
   });
 
   it("creates a protected key only after matching unlock passwords", async () => {
     const controls = { ...props(), keyStatus: "missing" as const };
     render(<WorkspaceSyncControls {...controls} />);
 
-    expect(screen.queryByRole("button", { name: "Sync" })).not.toBeInTheDocument();
-    const fields = screen.getAllByLabelText(/unlock password/i);
+    expect(screen.queryByRole("button", { name: "Synchronisieren" })).not.toBeInTheDocument();
+    const fields = screen.getAllByLabelText(/Entsperrpasswort/i);
     fireEvent.change(fields[0]!, { target: { value: "correct horse battery" } });
     fireEvent.change(fields[1]!, { target: { value: "different password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create and unlock key" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("do not match");
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel erstellen und entsperren" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("stimmen nicht überein");
     expect(controls.onCreateKey).not.toHaveBeenCalled();
 
     fireEvent.change(fields[1]!, { target: { value: "correct horse battery" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create and unlock key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Schlüssel erstellen und entsperren" }));
     await waitFor(() =>
       expect(controls.onCreateKey).toHaveBeenCalledWith("correct horse battery")
     );
@@ -58,13 +58,13 @@ describe("WorkspaceSyncControls", () => {
     };
     render(<WorkspaceSyncControls {...controls} />);
 
-    fireEvent.change(screen.getByLabelText("Account password"), {
+    fireEvent.change(screen.getByLabelText("Account-Passwort"), {
       target: { value: "recipient account password" }
     });
-    const workspacePasswords = screen.getAllByLabelText(/unlock password/i);
+    const workspacePasswords = screen.getAllByLabelText(/Entsperrpasswort/i);
     fireEvent.change(workspacePasswords[0]!, { target: { value: "recipient workspace password" } });
     fireEvent.change(workspacePasswords[1]!, { target: { value: "recipient workspace password" } });
-    fireEvent.click(screen.getByRole("button", { name: "Set up encrypted workspace access" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verschlüsselten Zugriff einrichten" }));
 
     await waitFor(() =>
       expect(controls.onSetupShared).toHaveBeenCalledWith(
@@ -79,25 +79,25 @@ describe("WorkspaceSyncControls", () => {
     const controls = { ...props(), keyStatus: "missing" as const };
     render(<WorkspaceSyncControls {...controls} legacyMigrationRequired />);
 
-    expect(screen.getByText("migration required")).toBeInTheDocument();
-    expect(screen.getByText(/will not create a replacement key/i)).toBeInTheDocument();
+    expect(screen.getByText("Migration nötig")).toBeInTheDocument();
+    expect(screen.getByText(/Ersatzschlüssel/i)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Create and unlock key" })
+      screen.queryByRole("button", { name: "Schlüssel erstellen und entsperren" })
     ).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Synchronisieren" })).not.toBeInTheDocument();
   });
 
   it("labels fetch failures as server unavailable without mislabeling API errors", async () => {
     const controls = props();
     controls.onSync.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const { rerender } = render(<WorkspaceSyncControls {...controls} />);
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Server unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Synchronisieren" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Server ist nicht erreichbar");
 
     const rejected = props();
     rejected.onSync.mockRejectedValueOnce(new Error("The response was invalid."));
     rerender(<WorkspaceSyncControls {...rejected} />);
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+    fireEvent.click(screen.getByRole("button", { name: "Synchronisieren" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The response was invalid.");
   });
 
@@ -106,11 +106,11 @@ describe("WorkspaceSyncControls", () => {
     controls.onSync.mockResolvedValueOnce({ conflicts: 1, pulled: 1, pushed: 0 });
     const { rerender } = render(<WorkspaceSyncControls {...controls} conflictCount={1} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
-    expect(await screen.findByText("conflict")).toBeInTheDocument();
-    expect(screen.getByText("1 conflict needs manual resolution.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Synchronisieren" }));
+    expect(await screen.findByText("Konflikt")).toBeInTheDocument();
+    expect(screen.getByText("1 Konflikt muss manuell gelöst werden.")).toBeInTheDocument();
 
     rerender(<WorkspaceSyncControls {...controls} conflictCount={0} pendingCount={1} />);
-    await waitFor(() => expect(screen.getByText("idle")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("bereit")).toBeInTheDocument());
   });
 });

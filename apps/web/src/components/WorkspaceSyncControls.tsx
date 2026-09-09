@@ -26,10 +26,10 @@ interface WorkspaceSyncControlsProps {
 function errorMessage(error: unknown): string {
   if (error instanceof WorkspaceLockedError) return error.message;
   if (error instanceof TypeError) {
-    return "Server unavailable. Check that the backend is running, then try again.";
+    return "Der Server ist nicht erreichbar. Prüfe die Verbindung und versuche es erneut.";
   }
   if (error instanceof ApiError) return error.message;
-  return error instanceof Error ? error.message : "The operation failed. Please try again.";
+  return error instanceof Error ? error.message : "Der Vorgang ist fehlgeschlagen. Versuche es erneut.";
 }
 
 export function WorkspaceSyncControls({
@@ -63,7 +63,7 @@ export function WorkspaceSyncControls({
     event.preventDefault();
     setError(null);
     if (keyStatus === "missing" && passphrase !== confirmPassphrase) {
-      setError("The unlock passwords do not match.");
+      setError("Die Passwörter stimmen nicht überein.");
       return;
     }
     setIsSubmittingKey(true);
@@ -72,7 +72,7 @@ export function WorkspaceSyncControls({
         await onSetupShared(identityPassword, passphrase);
       } else if (keyStatus === "missing" && legacyMigrationRequired) {
         throw new Error(
-          "The original workspace key is required. CipherSpace will not create a replacement key for legacy local data."
+          "Der ursprüngliche Workspace-Schlüssel ist erforderlich. Für ältere lokale Daten wird kein Ersatzschlüssel erstellt."
         );
       } else if (keyStatus === "missing" && keyAccess?.canInitialize) {
         await onCreateKey(passphrase);
@@ -102,45 +102,45 @@ export function WorkspaceSyncControls({
   };
 
   return (
-    <section className="sync-panel" aria-label="Workspace synchronization">
+    <section className="sync-panel" aria-label="Workspace-Synchronisation">
       <div className="sync-panel__status">
         <div>
           <span className={`sync-status sync-status--${visibleStatus}`} role="status">
-            {legacyMigrationRequired ? "migration required" : visibleStatus}
+            {legacyMigrationRequired ? "Migration nötig" : ({ idle: "bereit", syncing: "Abgleich", synced: "aktuell", conflict: "Konflikt", failed: "Fehler", locked: "gesperrt" } as const)[visibleStatus]}
           </span>
           <strong>
-            {legacyMigrationRequired ? "Legacy local-data migration" : "Encrypted sync"}
+            {legacyMigrationRequired ? "Migration lokaler Bestandsdaten" : "Verschlüsselte Synchronisation"}
           </strong>
         </div>
         <p>
           {legacyMigrationRequired && keyStatus === "unlocked"
-            ? "The original workspace key is unlocked. CipherSpace is verifying and encrypting every legacy local record before workspace access resumes."
+            ? "Der ursprüngliche Schlüssel ist entsperrt. CipherSpace prüft und verschlüsselt jetzt alle älteren lokalen Datensätze."
             : keyStatus === "missing"
             ? keyAccess === null
-              ? "Checking whether this workspace can be initialized or has a key share…"
+              ? "Verschlüsselter Zugriff wird geprüft…"
               : keyAccess.keyShareAvailable
-              ? "Set up encrypted workspace access from your personal key share."
+              ? "Richte den Zugriff mit deiner persönlichen Schlüsselfreigabe ein."
               : keyAccess.canInitialize
-                ? "Create the first stable key for this new empty workspace."
-                : "This device has no local key and no encrypted key share is available."
+                ? "Erstelle den ersten Schlüssel für diesen noch leeren Workspace."
+                : "Auf diesem Gerät ist weder ein lokaler Schlüssel noch eine Freigabe vorhanden."
             : keyStatus === "locked"
-              ? "Unlock the local workspace key to encrypt and sync pending notes."
+              ? "Entsperre den lokalen Workspace-Schlüssel zum Verschlüsseln und Synchronisieren."
               : keyStatus === "checking"
-                ? "Checking this device for a protected workspace key…"
+                ? "Geschützter Workspace-Schlüssel wird gesucht…"
                 : conflictCount > 0
-                  ? `${conflictCount} conflict${conflictCount === 1 ? " needs" : "s need"} manual resolution.`
+                  ? `${conflictCount} ${conflictCount === 1 ? "Konflikt muss" : "Konflikte müssen"} manuell gelöst werden.`
                 : pendingCount > 0
-                  ? `${pendingCount} local change${pendingCount === 1 ? "" : "s"} ready to sync.`
-                  : "Local changes are synced. You can also pull remote updates manually."}
+                  ? `${pendingCount} lokale ${pendingCount === 1 ? "Änderung wartet" : "Änderungen warten"} auf den Abgleich.`
+                  : "Lokale Änderungen sind abgeglichen. Serveränderungen können manuell geladen werden."}
         </p>
       </div>
 
       {keyStatus === "missing" && keyAccess === null ? (
-        <div className="info-callout" role="status">Checking encrypted access…</div>
+        <div className="info-callout" role="status">Verschlüsselter Zugriff wird geprüft…</div>
       ) : keyStatus === "missing" && keyAccess?.keyShareAvailable ? (
         <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
           <label>
-            Account password
+            Account-Passwort
             <input
               autoComplete="current-password"
               disabled={isSubmittingKey}
@@ -153,7 +153,7 @@ export function WorkspaceSyncControls({
             />
           </label>
           <label>
-            New local unlock password
+            Neues lokales Entsperrpasswort
             <input
               autoComplete="new-password"
               disabled={isSubmittingKey}
@@ -166,7 +166,7 @@ export function WorkspaceSyncControls({
             />
           </label>
           <label>
-            Confirm unlock password
+            Entsperrpasswort bestätigen
             <input
               autoComplete="new-password"
               disabled={isSubmittingKey}
@@ -179,28 +179,28 @@ export function WorkspaceSyncControls({
             />
           </label>
           <button className="button button--primary" disabled={isSubmittingKey} type="submit">
-            {isSubmittingKey ? "Setting up…" : "Set up encrypted workspace access"}
+            {isSubmittingKey ? "Wird eingerichtet…" : "Verschlüsselten Zugriff einrichten"}
           </button>
           <small>
-            Your account password unlocks your client-only identity key. Choose an independent
-            password for this workspace on this browser; neither password is shared with the owner.
+            Das Account-Passwort entsperrt nur deinen lokalen Identitätsschlüssel. Wähle für
+            diesen Workspace ein eigenes Passwort; keines davon wird mit dem Besitzer geteilt.
           </small>
         </form>
       ) : keyStatus === "missing" && legacyMigrationRequired ? (
         <div className="warning-callout" role="status">
-          The original workspace key is not available on this device. CipherSpace will not create
-          a replacement key because it could not decrypt this legacy data. Restore the existing key
-          share if possible, or use the explicit delete option below.
+          Der ursprüngliche Workspace-Schlüssel fehlt auf diesem Gerät. Ein Ersatzschlüssel könnte
+          die älteren Daten nicht entschlüsseln. Stelle die vorhandene Freigabe wieder her oder
+          nutze unten die ausdrückliche Löschoption.
         </div>
       ) : keyStatus === "missing" && !keyAccess?.canInitialize ? (
         <div className="warning-callout" role="status">
-          Ask a workspace owner to create or refresh your encrypted workspace key share. Do not
-          create a replacement key for an existing workspace.
+          Bitte einen Workspace-Besitzer, deine verschlüsselte Schlüsselfreigabe zu erstellen oder
+          zu erneuern.
         </div>
       ) : keyStatus === "missing" || keyStatus === "locked" ? (
         <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
           <label>
-            Local unlock password
+            Lokales Entsperrpasswort
             <input
               autoComplete={keyStatus === "missing" ? "new-password" : "current-password"}
               disabled={isSubmittingKey}
@@ -214,7 +214,7 @@ export function WorkspaceSyncControls({
           </label>
           {keyStatus === "missing" ? (
             <label>
-              Confirm unlock password
+              Entsperrpasswort bestätigen
               <input
                 autoComplete="new-password"
                 disabled={isSubmittingKey}
@@ -229,15 +229,15 @@ export function WorkspaceSyncControls({
           ) : null}
           <button className="button button--primary" disabled={isSubmittingKey} type="submit">
             {isSubmittingKey
-              ? "Unlocking…"
+              ? "Wird entsperrt…"
               : keyStatus === "missing"
-                ? "Create and unlock key"
-                : "Unlock workspace"}
+                ? "Schlüssel erstellen und entsperren"
+                : "Workspace entsperren"}
           </button>
           {keyStatus === "missing" ? (
             <small>
-              This initializes the workspace once. The password stays on this browser profile;
-              there is no identity or workspace-key recovery in v1.
+              Damit wird der Workspace einmalig eingerichtet. Das Passwort bleibt in diesem
+              Browserprofil; eine Wiederherstellung ist in dieser Version nicht möglich.
             </small>
           ) : null}
         </form>
@@ -251,7 +251,7 @@ export function WorkspaceSyncControls({
             onClick={() => void handleSync()}
             type="button"
           >
-            {syncStatus === "syncing" ? "Syncing…" : "Sync"}
+            {syncStatus === "syncing" ? "Wird synchronisiert…" : "Synchronisieren"}
           </button>
           <button
             className="button button--quiet"
@@ -263,7 +263,7 @@ export function WorkspaceSyncControls({
             }}
             type="button"
           >
-            Lock
+            Sperren
           </button>
         </div>
       ) : null}

@@ -49,20 +49,20 @@ describe("EncryptionIdentitySetup", () => {
     const ensureIdentity = renderSetup();
 
     expect(
-      await screen.findByRole("heading", { name: "Set up this device for encryption" })
+      await screen.findByRole("heading", { name: "Dieses Gerät für Verschlüsselung einrichten" })
     ).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Import recovery kit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Wiederherstellungspaket importieren" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(/Account password/), {
+    fireEvent.change(screen.getByLabelText(/Account-Passwort/), {
       target: { value: "new user account password" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Create encryption identity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verschlüsselungsidentität erstellen" }));
 
     await waitFor(() => expect(ensureIdentity).toHaveBeenCalledWith("new user account password"));
     expect(
-      await screen.findByRole("heading", { name: "Encryption identity created" })
+      await screen.findByRole("heading", { name: "Verschlüsselungsidentität erstellt" })
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Export recovery kit" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Wiederherstellungspaket exportieren" })).toHaveAttribute(
       "href",
       "/account/security/recovery"
     );
@@ -73,9 +73,9 @@ describe("EncryptionIdentitySetup", () => {
     renderSetup();
 
     expect(
-      await screen.findByRole("heading", { name: "Your private encryption identity is missing" })
+      await screen.findByRole("heading", { name: "Deine private Verschlüsselungsidentität fehlt" })
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Import recovery kit" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create encryption identity" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Wiederherstellungspaket importieren" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verschlüsselungsidentität erstellen" })).not.toBeInTheDocument();
   });
 });

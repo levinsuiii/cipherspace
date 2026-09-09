@@ -12,19 +12,19 @@ import type { UserCryptoIdentityStatus } from "../key-management/userIdentity";
 function identityStatusLabel(status: UserCryptoIdentityStatus): string {
   switch (status) {
     case "ready":
-      return "Available locally and registered";
+      return "Lokal vorhanden und registriert";
     case "missing-unregistered":
-      return "First-device setup required";
+      return "Ersteinrichtung erforderlich";
     case "local-unregistered":
-      return "Public key registration incomplete";
+      return "Registrierung unvollständig";
     case "missing-registered":
-      return "Recovery kit required on this device";
+      return "Wiederherstellung erforderlich";
     case "identity-mismatch":
-      return "Local identity does not match account";
+      return "Lokale Identität passt nicht zum Account";
     case "error":
-      return "Status unavailable";
+      return "Status nicht verfügbar";
     default:
-      return "Checking…";
+      return "Wird geprüft…";
   }
 }
 
@@ -59,7 +59,7 @@ export function AccountRecoveryPage() {
     setExportError(null);
     setExportSuccess(null);
     if (recoveryPassphrase !== recoveryConfirmation) {
-      setExportError("The recovery passphrases do not match.");
+      setExportError("Die Wiederherstellungspassphrasen stimmen nicht überein.");
       return;
     }
     setIsExporting(true);
@@ -73,10 +73,10 @@ export function AccountRecoveryPage() {
       setAccountPassword("");
       setRecoveryPassphrase("");
       setRecoveryConfirmation("");
-      setExportSuccess("Encrypted recovery kit created locally. Save it somewhere private.");
+      setExportSuccess("Verschlüsseltes Wiederherstellungspaket lokal erstellt. Bewahre es geschützt auf.");
     } catch (error) {
       setKitText("");
-      setExportError(error instanceof Error ? error.message : "Recovery kit export failed.");
+      setExportError(error instanceof Error ? error.message : "Export des Wiederherstellungspakets fehlgeschlagen.");
     } finally {
       setIsExporting(false);
     }
@@ -96,9 +96,9 @@ export function AccountRecoveryPage() {
     setExportError(null);
     try {
       await navigator.clipboard.writeText(kitText);
-      setExportSuccess("Encrypted recovery kit copied to the clipboard.");
+      setExportSuccess("Verschlüsseltes Wiederherstellungspaket kopiert.");
     } catch {
-      setExportError("Clipboard access failed. Select and copy the recovery kit text manually.");
+      setExportError("Zugriff auf die Zwischenablage fehlgeschlagen. Kopiere den Text manuell.");
     }
   };
 
@@ -109,7 +109,7 @@ export function AccountRecoveryPage() {
     try {
       setImportText(await file.text());
     } catch {
-      setImportError("The selected recovery kit file could not be read.");
+      setImportError("Die ausgewählte Datei konnte nicht gelesen werden.");
     }
   };
 
@@ -134,10 +134,10 @@ export function AccountRecoveryPage() {
       setIdentityStatus("checking");
       setIdentityRefreshToken((current) => current + 1);
       setImportSuccess(
-        "Encryption identity restored on this device. Existing workspace key shares can now be unlocked normally."
+        "Verschlüsselungsidentität auf diesem Gerät wiederhergestellt. Vorhandene Workspace-Freigaben lassen sich wieder entsperren."
       );
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Recovery kit import failed.");
+      setImportError(error instanceof Error ? error.message : "Import des Wiederherstellungspakets fehlgeschlagen.");
     } finally {
       setIsImporting(false);
     }
@@ -147,16 +147,16 @@ export function AccountRecoveryPage() {
     <section className="recovery-page">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Account / Security</p>
-          <h1>Encryption recovery</h1>
-          <p>Back up or restore the private identity used to open workspace key shares.</p>
+          <p className="eyebrow">Account / Sicherheit</p>
+          <h1>Wiederherstellung</h1>
+          <p>Sichere oder importiere die private Identität für Workspace-Schlüsselfreigaben.</p>
         </div>
       </header>
 
       <section className="panel recovery-status" aria-labelledby="recovery-status-title">
         <div>
-          <p className="eyebrow">This browser / device</p>
-          <h2 id="recovery-status-title">Local crypto identity</h2>
+          <p className="eyebrow">Dieser Browser / dieses Gerät</p>
+          <h2 id="recovery-status-title">Lokale Verschlüsselungsidentität</h2>
         </div>
         <span className={`identity-status identity-status--${identityStatus}`} role="status">
           {identityStatusLabel(identityStatus)}
@@ -169,25 +169,26 @@ export function AccountRecoveryPage() {
       />
 
       <div className="warning-callout recovery-warning" role="note">
-        <strong>Keep the recovery kit and its passphrase separate.</strong> Losing both the local
-        private identity and a usable recovery kit can make encrypted shared workspaces inaccessible.
-        The server cannot recover plaintext notes, comments, private keys, or workspace keys.
-        CipherSpace has not been independently security audited.
+        <strong>Bewahre Paket und Passphrase getrennt auf.</strong> Ohne lokale private Identität
+        und nutzbares Wiederherstellungspaket können verschlüsselte Workspaces unzugänglich werden.
+        Der Server kann Notizinhalte, Kommentare, private Schlüssel oder Workspace-Schlüssel nicht
+        wiederherstellen. CipherSpace wurde nicht unabhängig sicherheitsgeprüft.
       </div>
 
       <div className="recovery-grid">
         <section className="panel" aria-labelledby="recovery-export-title">
-          <p className="eyebrow">Backup</p>
-          <h2 id="recovery-export-title">Export encrypted recovery kit</h2>
+          <p className="eyebrow">Sicherung</p>
+          <h2 id="recovery-export-title">Wiederherstellungspaket exportieren</h2>
           {identityStatus === "ready" ? (
             <>
               <p>
-                The export contains public identity metadata and an AES-GCM-encrypted PKCS8 private
-                key. It does not include workspace keys, notes, comments, auth tokens, or passwords.
+                Der Export enthält öffentliche Identitätsmetadaten und einen mit AES-GCM
+                verschlüsselten privaten PKCS8-Schlüssel. Workspace-Schlüssel, Notizen, Kommentare,
+                Sitzungstoken und Passwörter sind nicht enthalten.
               </p>
               <form className="form-stack" onSubmit={(event) => void createKit(event)}>
                 <label>
-                  Current account password
+                  Aktuelles Account-Passwort
                   <input
                     autoComplete="current-password"
                     disabled={isExporting}
@@ -198,10 +199,10 @@ export function AccountRecoveryPage() {
                     type="password"
                     value={accountPassword}
                   />
-                  <small>Used only in this browser to unlock the current local identity.</small>
+                  <small>Wird nur in diesem Browser zum Entsperren der lokalen Identität verwendet.</small>
                 </label>
                 <label>
-                  Recovery passphrase
+                  Wiederherstellungspassphrase
                   <input
                     autoComplete="new-password"
                     disabled={isExporting}
@@ -212,10 +213,10 @@ export function AccountRecoveryPage() {
                     type="password"
                     value={recoveryPassphrase}
                   />
-                  <small>Use a unique 16–128 character passphrase, preferably from a password manager.</small>
+                  <small>Verwende 16–128 eindeutige Zeichen, am besten aus einem Passwortmanager.</small>
                 </label>
                 <label>
-                  Confirm recovery passphrase
+                  Wiederherstellungspassphrase bestätigen
                   <input
                     autoComplete="new-password"
                     disabled={isExporting}
@@ -230,21 +231,21 @@ export function AccountRecoveryPage() {
                 {exportError ? <div className="form-error" role="alert">{exportError}</div> : null}
                 {exportSuccess ? <div className="form-success" role="status">{exportSuccess}</div> : null}
                 <button className="button button--primary" disabled={isExporting}>
-                  {isExporting ? "Encrypting…" : "Create recovery kit"}
+                  {isExporting ? "Wird verschlüsselt…" : "Wiederherstellungspaket erstellen"}
                 </button>
               </form>
               {kitText ? (
                 <div className="recovery-output">
                   <label>
-                    Encrypted recovery kit JSON
+                    Verschlüsseltes Wiederherstellungspaket (JSON)
                     <textarea readOnly rows={8} value={kitText} />
                   </label>
                   <div className="recovery-actions">
                     <button className="button button--primary" onClick={downloadKit} type="button">
-                      Download JSON
+                      JSON herunterladen
                     </button>
                     <button className="button button--secondary" onClick={() => void copyKit()} type="button">
-                      Copy text
+                      Text kopieren
                     </button>
                   </div>
                 </div>
@@ -253,39 +254,39 @@ export function AccountRecoveryPage() {
           ) : (
             <div className="warning-callout">
               {identityStatus === "missing-unregistered"
-                ? "This account has no registered public key yet. Set up this device above before exporting a recovery kit."
+                ? "Für diesen Account ist noch kein öffentlicher Schlüssel registriert. Richte das Gerät zuerst oben ein."
                 : identityStatus === "local-unregistered"
-                  ? "Complete public-key registration above before exporting a recovery kit."
-                  : "There is no verified matching private identity in this browser to export. Import the account's recovery kit first."}
+                  ? "Schließe oben die Registrierung des öffentlichen Schlüssels ab."
+                  : "In diesem Browser ist keine passende private Identität zum Exportieren vorhanden. Importiere zuerst das Paket des Accounts."}
             </div>
           )}
         </section>
 
         <section className="panel" aria-labelledby="recovery-import-title">
-          <p className="eyebrow">Restore</p>
-          <h2 id="recovery-import-title">Import on this device</h2>
+          <p className="eyebrow">Wiederherstellen</p>
+          <h2 id="recovery-import-title">Auf diesem Gerät importieren</h2>
           <p>
-            Sign in to the matching account, then paste the kit or select its JSON file. Decryption
-            and private-key storage stay in this browser.
+            Melde dich beim passenden Account an und füge das Paket als Text oder JSON-Datei ein.
+            Entschlüsselung und Speicherung des privaten Schlüssels bleiben in diesem Browser.
           </p>
           <form className="form-stack" onSubmit={(event) => void importKit(event)}>
             <label>
-              Recovery kit file
+              Datei des Wiederherstellungspakets
               <input accept="application/json,.json,text/plain" onChange={(event) => void readKitFile(event)} type="file" />
             </label>
             <label>
-              Recovery kit text
+              Inhalt des Wiederherstellungspakets
               <textarea
                 maxLength={64 * 1024}
                 onChange={(event) => setImportText(event.target.value)}
-                placeholder="Paste the encrypted recovery kit JSON"
+                placeholder="Verschlüsseltes JSON hier einfügen"
                 required
                 rows={8}
                 value={importText}
               />
             </label>
             <label>
-              Recovery passphrase
+              Wiederherstellungspassphrase
               <input
                 autoComplete="off"
                 maxLength={128}
@@ -297,7 +298,7 @@ export function AccountRecoveryPage() {
               />
             </label>
             <label>
-              Current account password
+              Aktuelles Account-Passwort
               <input
                 autoComplete="current-password"
                 maxLength={128}
@@ -307,7 +308,7 @@ export function AccountRecoveryPage() {
                 type="password"
                 value={importAccountPassword}
               />
-              <small>Re-encrypts the restored private key for local use on this device.</small>
+              <small>Verschlüsselt den wiederhergestellten privaten Schlüssel für dieses Gerät neu.</small>
             </label>
             {hasLocalIdentity ? (
               <label className="confirmation-check">
@@ -317,8 +318,8 @@ export function AccountRecoveryPage() {
                   type="checkbox"
                 />
                 <span>
-                  I understand this will replace the existing local identity only after the kit is
-                  decrypted and its public key is verified against my account.
+                  Ich verstehe, dass die vorhandene lokale Identität erst ersetzt wird, nachdem das
+                  Paket entschlüsselt und sein öffentlicher Schlüssel mit meinem Account geprüft wurde.
                 </span>
               </label>
             ) : null}
@@ -328,7 +329,7 @@ export function AccountRecoveryPage() {
               className="button button--primary"
               disabled={isImporting || (hasLocalIdentity && !confirmOverwrite)}
             >
-              {isImporting ? "Restoring…" : "Import recovery kit"}
+              {isImporting ? "Wird wiederhergestellt…" : "Wiederherstellungspaket importieren"}
             </button>
           </form>
         </section>
@@ -336,17 +337,16 @@ export function AccountRecoveryPage() {
 
       {identityStatus === "missing-registered" || identityStatus === "identity-mismatch" ? (
         <section className="panel replacement-identity" aria-labelledby="replacement-title">
-          <p className="eyebrow">Without a recovery kit</p>
-          <h2 id="replacement-title">Create a replacement identity and re-share access</h2>
+          <p className="eyebrow">Ohne Wiederherstellungspaket</p>
+          <h2 id="replacement-title">Ersatzidentität und neue Freigaben</h2>
           <p>
-            A different identity cannot decrypt shares made for the lost key. Every workspace would
-            need a member who still has access to wrap its key for the replacement identity. Server
-            identity replacement and key re-sharing are intentionally not implemented in this v1
-            recovery slice because they require a versioned key migration. Creating a new key here
-            would not recover existing access.
+            Eine andere Identität kann Freigaben für den verlorenen Schlüssel nicht entschlüsseln.
+            Jeder Workspace bräuchte ein Mitglied mit Zugriff, das seinen Schlüssel erneut teilt.
+            Diese versionierte Schlüsselumstellung ist derzeit nicht implementiert. Ein neuer
+            Schlüssel würde vorhandenen Zugriff nicht wiederherstellen.
           </p>
           <button className="button button--secondary" disabled type="button">
-            Replacement identity unavailable in v1
+            Ersatzidentität derzeit nicht verfügbar
           </button>
         </section>
       ) : null}

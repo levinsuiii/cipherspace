@@ -2,6 +2,8 @@
 
 CipherSpace is a private beta with a runnable responsive React frontend, an installable Progressive Web App shell, Fastify backend, PostgreSQL persistence, authentication, workspace membership, recipient-specific end-to-end encrypted workspace-key sharing, encrypted-note/version APIs, encrypted note comments and replies, an isolated client crypto package, durable local-first note storage, encrypted-note push/pull, local workspace lock/unlock, encrypted identity recovery-kit export/import, manual sync, manual note-edit conflict resolution, and configuration for a no-cost private-beta deployment. Automated device pairing, identity replacement, rotation, cryptographic revocation, automatic merging, and offline comment sync remain separate future work.
 
+The frontend now includes a German public landing page and a coherent, restrained block-and-document visual system shared with authentication and workspace screens. Interface copy is German where it is owned by the frontend; protocol identifiers, cryptographic algorithm names, API-provided error text, and persisted role/status values remain technical implementation data. No authentication, encryption, sync, storage, or authorization behavior changed in this visual/copy pass.
+
 ## Current Status
 
 - `apps/api` contains a TypeScript/Node.js Fastify service.

@@ -8,12 +8,14 @@ import { AccountRecoveryPage } from "./pages/AccountRecoveryPage";
 import { ConflictResolutionPage } from "./pages/ConflictResolutionPage";
 import { NoteDetailPage } from "./pages/NoteDetailPage";
 import { NotesPage } from "./pages/NotesPage";
+import { LandingPage } from "./pages/LandingPage";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
 
 export function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
       <Route element={<PublicOnlyRoute />}>
         <Route path="/login" element={<AuthPage mode="login" />} />
         <Route path="/register" element={<AuthPage mode="register" />} />
@@ -32,7 +34,7 @@ export function App() {
         </Route>
       </Route>
 
-      <Route path="*" element={<Navigate replace to="/workspaces" />} />
+      <Route path="*" element={<Navigate replace to="/" />} />
     </Routes>
   );
 }

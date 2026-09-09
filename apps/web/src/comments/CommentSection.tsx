@@ -51,16 +51,16 @@ function DecryptedCommentBody({
     void getKey()
       .then((key) => decryptApiComment(comment, key, { noteId, workspaceId }))
       .then((plaintext) => { if (active) setContent(plaintext); })
-      .catch(() => { if (active) setError("This comment could not be decrypted."); });
+      .catch(() => { if (active) setError("Der Kommentar konnte nicht entschlüsselt werden."); });
     return () => { active = false; };
   }, [comment, getKey, keyStatus, noteId, workspaceId]);
 
-  if (comment.deletedAt) return <p className="comment-placeholder">Comment deleted.</p>;
+  if (comment.deletedAt) return <p className="comment-placeholder">Kommentar gelöscht.</p>;
   if (keyStatus !== "unlocked") {
-    return <p className="comment-placeholder">Unlock the workspace key to read this comment.</p>;
+    return <p className="comment-placeholder">Entsperre den Workspace-Schlüssel, um den Kommentar zu lesen.</p>;
   }
   if (error) return <p className="comment-placeholder comment-placeholder--error">{error}</p>;
-  if (content === null) return <p className="comment-placeholder">Decrypting comment…</p>;
+  if (content === null) return <p className="comment-placeholder">Kommentar wird entschlüsselt…</p>;
   return <p className="comment-content">{content}</p>;
 }
 
@@ -94,8 +94,8 @@ function CommentItem(props: CommentItemProps) {
     (role === "owner" || (role === "editor" && comment.authorId === currentUserId));
   const canReply = !comment.deletedAt && role !== "viewer";
   const author = comment.authorId === currentUserId
-    ? "You"
-    : memberNames.get(comment.authorId) ?? shortenOpaqueValue(comment.authorId, "Member");
+    ? "Du"
+    : memberNames.get(comment.authorId) ?? shortenOpaqueValue(comment.authorId, "Mitglied");
 
   return (
     <article className="comment-item">
@@ -112,9 +112,9 @@ function CommentItem(props: CommentItemProps) {
       />
       {canReply || canDelete ? (
         <div className="comment-item__actions">
-          {canReply ? <button onClick={() => onReply(comment)} type="button">Reply</button> : null}
+          {canReply ? <button onClick={() => onReply(comment)} type="button">Antworten</button> : null}
           {canDelete ? (
-            <button onClick={() => void onDelete(comment)} type="button">Delete</button>
+            <button onClick={() => void onDelete(comment)} type="button">Löschen</button>
           ) : null}
         </div>
       ) : null}
@@ -176,12 +176,12 @@ export function CommentSection({
       <section className="panel comment-section" aria-labelledby="note-comments-heading">
         <div className="section-heading">
           <div>
-            <h2 id="note-comments-heading">Discussion</h2>
-            <p>Encrypted comments scoped to this note.</p>
+            <h2 id="note-comments-heading">Diskussion</h2>
+            <p>Verschlüsselte Kommentare zu dieser Notiz.</p>
           </div>
           <span className="count-badge">0</span>
         </div>
-        <p className="comment-empty">Sync this local note before starting a discussion.</p>
+        <p className="comment-empty">Synchronisiere die lokale Notiz, bevor du einen Kommentar schreibst.</p>
       </section>
     );
   }
@@ -194,7 +194,7 @@ export function CommentSection({
     setIsSubmitting(true);
     try {
       const key = await getKey();
-      if (!user) throw new Error("Sign in again before creating a comment.");
+      if (!user) throw new Error("Melde dich erneut an, bevor du einen Kommentar erstellst.");
       const input = await encryptCommentForApi(content, {
         authorId: user.id,
         commentId: crypto.randomUUID(),
@@ -210,7 +210,7 @@ export function CommentSection({
       setReplyTo(null);
       void queryClient.invalidateQueries({ queryKey: commentsKey });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The comment could not be created.");
+      setError(caught instanceof Error ? caught.message : "Der Kommentar konnte nicht erstellt werden.");
     } finally {
       setIsSubmitting(false);
     }
@@ -235,7 +235,7 @@ export function CommentSection({
       }));
       void queryClient.invalidateQueries({ queryKey: commentsKey });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The comment could not be deleted.");
+      setError(caught instanceof Error ? caught.message : "Der Kommentar konnte nicht gelöscht werden.");
     }
   };
 
@@ -243,18 +243,18 @@ export function CommentSection({
     <section className="panel comment-section" aria-labelledby="note-comments-heading">
       <div className="section-heading">
         <div>
-          <h2 id="note-comments-heading">Discussion</h2>
-          <p>Encrypted comments scoped to this note.</p>
+          <h2 id="note-comments-heading">Diskussion</h2>
+          <p>Verschlüsselte Kommentare zu dieser Notiz.</p>
         </div>
         <span className="count-badge">{commentsQuery.data?.comments.length ?? 0}</span>
       </div>
 
-      {commentsQuery.isLoading ? <p>Loading comments…</p> : null}
+      {commentsQuery.isLoading ? <p>Kommentare werden geladen…</p> : null}
       {commentsQuery.isError ? (
-        <div className="form-error" role="alert">Comments require an online connection.</div>
+        <div className="form-error" role="alert">Kommentare benötigen eine Onlineverbindung.</div>
       ) : null}
       {!commentsQuery.isLoading && !commentsQuery.isError && thread.length === 0 ? (
-        <p className="comment-empty">No comments yet. Start a focused discussion about this note.</p>
+        <p className="comment-empty">Noch keine Kommentare.</p>
       ) : null}
       <div className="comment-thread">
         {thread.map((comment) => (
@@ -275,35 +275,35 @@ export function CommentSection({
       </div>
 
       {role === "viewer" ? (
-        <p className="read-only-message">Viewers can read discussion but cannot add comments.</p>
+        <p className="read-only-message">Leser können Kommentare lesen, aber keine hinzufügen.</p>
       ) : (
         <form className="form-stack comment-form" onSubmit={(event) => void handleSubmit(event)}>
           {replyTo ? (
             <div className="comment-replying">
-              Replying to {memberNames.get(replyTo.authorId) ?? "a workspace member"}.
-              <button onClick={() => setReplyTo(null)} type="button">Cancel</button>
+              Antwort an {memberNames.get(replyTo.authorId) ?? "ein Workspace-Mitglied"}.
+              <button onClick={() => setReplyTo(null)} type="button">Abbrechen</button>
             </div>
           ) : null}
           <label>
-            {replyTo ? "Reply" : "Comment"}
+            {replyTo ? "Antwort" : "Kommentar"}
             <textarea
               disabled={isSubmitting || keyStatus !== "unlocked"}
               maxLength={16_000}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder={keyStatus === "unlocked" ? "Add context or ask a question…" : "Unlock the workspace key to comment."}
+              placeholder={keyStatus === "unlocked" ? "Hinweis ergänzen oder Frage stellen…" : "Zum Kommentieren den Workspace entsperren."}
               rows={4}
               value={draft}
             />
           </label>
           {keyStatus !== "unlocked" ? (
-            <p className="comment-key-message">Comments can be read or created after this workspace is unlocked.</p>
+            <p className="comment-key-message">Kommentare sind nach dem Entsperren des Workspace verfügbar.</p>
           ) : null}
           {error ? <div className="form-error" role="alert">{error}</div> : null}
           <button
             className="button button--primary"
             disabled={isSubmitting || keyStatus !== "unlocked" || !draft.trim()}
           >
-            {isSubmitting ? "Encrypting and posting…" : replyTo ? "Post reply" : "Add comment"}
+            {isSubmitting ? "Wird verschlüsselt und gesendet…" : replyTo ? "Antwort senden" : "Kommentar hinzufügen"}
           </button>
         </form>
       )}

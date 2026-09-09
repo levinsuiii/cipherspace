@@ -84,7 +84,7 @@ describe("WorkspaceKeyProvider background locking", () => {
     fireEvent.click(screen.getByRole("button", { name: "Read key" }));
     await waitFor(() => {
       expect(document.querySelector("[data-key-error]")).toHaveTextContent(
-        "Unlock this workspace before syncing."
+        "Entsperre den Workspace vor der Synchronisation."
       );
     });
   });

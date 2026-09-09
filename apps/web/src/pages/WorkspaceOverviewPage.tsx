@@ -7,7 +7,7 @@ import { api } from "../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../components/AsyncState";
 import type { WorkspaceOutletContext } from "../layouts/WorkspaceLayout";
 import { queryKeys } from "../queryKeys";
-import { formatDate } from "../utils";
+import { formatDate, workspaceRoleLabel } from "../utils";
 import { useWorkspaceKey } from "../key-management/WorkspaceKeyContext";
 import type { WorkspaceMember, WorkspaceRole } from "../api/types";
 
@@ -28,7 +28,7 @@ export function WorkspaceOverviewPage() {
     ]);
     const invitee = inviteeResult.invitee;
     if (invitee.identity.keyVersion !== USER_IDENTITY_KEY_VERSION) {
-      throw new Error("The recipient identity key version is not supported by this client.");
+      throw new Error("Diese Version der Empfängeridentität wird nicht unterstützt.");
     }
     const wrapped = await wrapWorkspaceKeyForRecipient(key, {
       ...invitee.identity,
@@ -81,17 +81,17 @@ export function WorkspaceOverviewPage() {
       <section className="panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Directory</p>
-            <h2>Members</h2>
+            <p className="eyebrow">Workspace-Zugriff</p>
+            <h2>Mitglieder</h2>
           </div>
           <span className="count-badge">{membersQuery.data?.members.length ?? "—"}</span>
         </div>
-        {membersQuery.isLoading ? <LoadingState label="Loading members…" /> : null}
+        {membersQuery.isLoading ? <LoadingState label="Mitglieder werden geladen…" /> : null}
         {membersQuery.isError ? (
           <ErrorState error={membersQuery.error} onRetry={() => void membersQuery.refetch()} />
         ) : null}
         {membersQuery.data?.members.length === 0 ? (
-          <EmptyState description="This workspace has no visible members." title="No members" />
+          <EmptyState description="Für diesen Workspace sind keine Mitglieder sichtbar." title="Keine Mitglieder" />
         ) : null}
         {membersQuery.data?.members.length ? (
           <ul className="member-list">
@@ -103,7 +103,7 @@ export function WorkspaceOverviewPage() {
                 <div>
                   <strong>{member.email}</strong>
                   <small>
-                    Joined {formatDate(member.addedAt)} · key share {member.keyShareStatus}
+                    Seit {formatDate(member.addedAt)} · Schlüsselfreigabe {member.keyShareStatus === "available" ? "vorhanden" : "fehlt"}
                   </small>
                 </div>
                 {workspace.role === "owner" && member.keyShareStatus === "missing" ? (
@@ -113,10 +113,10 @@ export function WorkspaceOverviewPage() {
                     onClick={() => repairShareMutation.mutate(member)}
                     type="button"
                   >
-                    Share key
+                    Schlüssel teilen
                   </button>
                 ) : null}
-                <span className={`role-badge role-badge--${member.role}`}>{member.role}</span>
+                <span className={`role-badge role-badge--${member.role}`}>{workspaceRoleLabel(member.role)}</span>
               </li>
             ))}
           </ul>
@@ -124,15 +124,15 @@ export function WorkspaceOverviewPage() {
         {workspace.role === "owner" ? (
           <form className="form-stack member-invite-form" onSubmit={handleInvite}>
             <div>
-              <p className="eyebrow">Add member</p>
-              <h3>Share encrypted access</h3>
+              <p className="eyebrow">Mitglied hinzufügen</p>
+              <h3>Verschlüsselten Zugriff teilen</h3>
               <p>
-                The workspace must be unlocked. CipherSpace fetches the registered recipient public
-                key and uploads only a recipient-specific encrypted workspace key.
+                CipherSpace lädt den registrierten öffentlichen Schlüssel des Empfängers und
+                überträgt nur einen dafür verschlüsselten Workspace-Schlüssel.
               </p>
             </div>
             <label>
-              Registered user email
+              E-Mail eines registrierten Accounts
               <input
                 autoComplete="email"
                 disabled={addMemberMutation.isPending}
@@ -144,18 +144,18 @@ export function WorkspaceOverviewPage() {
               />
             </label>
             <label>
-              Role
+              Rolle
               <select
                 disabled={addMemberMutation.isPending}
                 onChange={(event) => setRole(event.target.value as "editor" | "viewer")}
                 value={role}
               >
                 <option value="editor">Editor</option>
-                <option value="viewer">Viewer</option>
+                <option value="viewer">Leser</option>
               </select>
             </label>
             {workspaceKey.status !== "unlocked" ? (
-              <div className="warning-callout">Unlock the workspace before adding a member.</div>
+              <div className="warning-callout">Entsperre den Workspace, bevor du ein Mitglied hinzufügst.</div>
             ) : null}
             {addMemberMutation.error ? (
               <div className="form-error" role="alert">{addMemberMutation.error.message}</div>
@@ -171,22 +171,22 @@ export function WorkspaceOverviewPage() {
                 !email.trim()
               }
             >
-              {addMemberMutation.isPending ? "Encrypting access…" : "Add member"}
+              {addMemberMutation.isPending ? "Zugriff wird verschlüsselt…" : "Mitglied hinzufügen"}
             </button>
           </form>
         ) : null}
       </section>
 
       <aside className="panel workspace-summary">
-        <p className="eyebrow">Workspace record</p>
+        <p className="eyebrow">Workspace-Datensatz</p>
         <dl>
-          <div><dt>Created</dt><dd>{formatDate(workspace.createdAt)}</dd></div>
-          <div><dt>Last updated</dt><dd>{formatDate(workspace.updatedAt)}</dd></div>
-          <div><dt>Your role</dt><dd>{workspace.role}</dd></div>
+          <div><dt>Erstellt</dt><dd>{formatDate(workspace.createdAt)}</dd></div>
+          <div><dt>Aktualisiert</dt><dd>{formatDate(workspace.updatedAt)}</dd></div>
+          <div><dt>Deine Rolle</dt><dd>{workspaceRoleLabel(workspace.role)}</dd></div>
           <div><dt>Workspace ID</dt><dd className="mono">{workspace.id}</dd></div>
         </dl>
         <Link className="button button--secondary button--full" to="notes">
-          Open notes
+          Notizen öffnen
         </Link>
       </aside>
     </div>

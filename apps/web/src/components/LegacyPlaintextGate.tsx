@@ -33,7 +33,7 @@ export function LegacyPlaintextGate({
       await onDelete();
     } catch (caught) {
       setDeleteError(
-        caught instanceof Error ? caught.message : "Legacy local data could not be deleted."
+        caught instanceof Error ? caught.message : "Ältere lokale Daten konnten nicht gelöscht werden."
       );
       setIsDeleting(false);
     }
@@ -41,23 +41,23 @@ export function LegacyPlaintextGate({
 
   return (
     <section className="panel" aria-labelledby="legacy-plaintext-heading">
-      <p className="eyebrow">Security action required</p>
-      <h2 id="legacy-plaintext-heading">Legacy plaintext blocks this workspace</h2>
+      <p className="eyebrow">Sicherheitsaktion erforderlich</p>
+      <h2 id="legacy-plaintext-heading">Ältere Klartextdaten blockieren den Workspace</h2>
       <p>
-        An older CipherSpace version left readable note data in this browser profile. Notes,
-        editing, comments, conflicts, and sync stay unavailable until every affected record is
-        encrypted with the original workspace key or explicitly deleted.
+        Eine ältere CipherSpace-Version hat lesbare Notizdaten in diesem Browserprofil gespeichert.
+        Der Workspace bleibt gesperrt, bis alle betroffenen Datensätze mit dem ursprünglichen
+        Schlüssel verschlüsselt oder ausdrücklich gelöscht wurden.
       </p>
       <dl>
-        <div><dt>Notes</dt><dd>{inspection.notes}</dd></div>
-        <div><dt>Pending changes</dt><dd>{inspection.pendingChanges}</dd></div>
-        <div><dt>Conflicts</dt><dd>{inspection.conflicts}</dd></div>
+        <div><dt>Notizen</dt><dd>{inspection.notes}</dd></div>
+        <div><dt>Ausstehende Änderungen</dt><dd>{inspection.pendingChanges}</dd></div>
+        <div><dt>Konflikte</dt><dd>{inspection.conflicts}</dd></div>
       </dl>
 
       {accessControls}
       {isMigrating ? (
         <div className="info-callout" role="status">
-          Encrypting and verifying legacy local records…
+          Ältere lokale Datensätze werden verschlüsselt und geprüft…
         </div>
       ) : null}
       {error ? (
@@ -69,7 +69,7 @@ export function LegacyPlaintextGate({
             onClick={onRetry}
             type="button"
           >
-            Retry migration
+            Migration erneut versuchen
           </button>
         </div>
       ) : null}
@@ -82,14 +82,14 @@ export function LegacyPlaintextGate({
           onClick={() => setConfirmingDelete(true)}
           type="button"
         >
-          Review permanent delete option
+          Dauerhaftes Löschen prüfen
         </button>
       ) : (
         <div className="warning-callout" role="alert">
           <p>
-            This permanently deletes the local note, pending-change, and conflict records for every
-            affected note. Unsynced or local-only content cannot be recovered. Encrypted server
-            versions can be downloaded again after cleanup. Nothing is deleted unless you confirm.
+            Dadurch werden lokale Notizen, ausstehende Änderungen und Konflikte dauerhaft gelöscht.
+            Nur lokal vorhandene Inhalte können nicht wiederhergestellt werden. Verschlüsselte
+            Serverversionen lassen sich danach erneut laden.
           </p>
           <div className="editor-actions">
             <button
@@ -98,7 +98,7 @@ export function LegacyPlaintextGate({
               onClick={() => void handleDelete()}
               type="button"
             >
-              {isDeleting ? "Deleting affected records…" : "Permanently delete affected local records"}
+              {isDeleting ? "Datensätze werden gelöscht…" : "Betroffene lokale Datensätze löschen"}
             </button>
             <button
               className="button button--quiet"
@@ -106,7 +106,7 @@ export function LegacyPlaintextGate({
               onClick={() => setConfirmingDelete(false)}
               type="button"
             >
-              Cancel
+              Abbrechen
             </button>
           </div>
         </div>

@@ -20,7 +20,7 @@ describe("LegacyPlaintextGate", () => {
       </LegacyPlaintextGate>
     );
 
-    expect(screen.getByText("Legacy plaintext blocks this workspace")).toBeInTheDocument();
+    expect(screen.getByText("Ältere Klartextdaten blockieren den Workspace")).toBeInTheDocument();
     expect(screen.getByText("Original key unlock controls")).toBeInTheDocument();
     expect(screen.queryByText("Normal workspace notes and comments")).not.toBeInTheDocument();
   });
@@ -42,12 +42,12 @@ describe("LegacyPlaintextGate", () => {
 
     expect(screen.getByText("Migration could not verify a legacy record.")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Permanently delete affected local records" })
+      screen.queryByRole("button", { name: "Betroffene lokale Datensätze löschen" })
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Review permanent delete option" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dauerhaftes Löschen prüfen" }));
     expect(onDelete).not.toHaveBeenCalled();
     fireEvent.click(
-      screen.getByRole("button", { name: "Permanently delete affected local records" })
+      screen.getByRole("button", { name: "Betroffene lokale Datensätze löschen" })
     );
     await waitFor(() => expect(onDelete).toHaveBeenCalledOnce());
   });

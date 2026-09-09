@@ -18,7 +18,7 @@ export function AuthenticatedLayout() {
       await logout();
       navigate("/login", { replace: true });
     } catch (error) {
-      setLogoutError(error instanceof Error ? error.message : "Could not sign out.");
+      setLogoutError(error instanceof Error ? error.message : "Abmelden fehlgeschlagen.");
       setIsLoggingOut(false);
     }
   };
@@ -36,14 +36,14 @@ export function AuthenticatedLayout() {
               <span className="brand-mark" aria-hidden="true">C</span>
               <span>CipherSpace</span>
             </Link>
-            <nav aria-label="Primary navigation">
+            <nav aria-label="Hauptnavigation">
               <NavLink to="/workspaces">Workspaces</NavLink>
-              <NavLink to="/account/security/recovery">Security</NavLink>
+              <NavLink to="/account/security/recovery">Sicherheit</NavLink>
             </nav>
             <div className="account-menu">
               <span title={user.email}>{user.email}</span>
               <Link className="button button--quiet account-security-link" to="/account/security/recovery">
-                Security
+                Sicherheit
               </Link>
               <button
                 className="button button--quiet"
@@ -51,7 +51,7 @@ export function AuthenticatedLayout() {
                 onClick={() => void handleLogout()}
                 type="button"
               >
-                {isLoggingOut ? "Signing out…" : "Sign out"}
+                {isLoggingOut ? "Wird abgemeldet…" : "Abmelden"}
               </button>
             </div>
           </header>

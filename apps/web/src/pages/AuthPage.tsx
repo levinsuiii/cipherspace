@@ -32,7 +32,7 @@ export function AuthPage({ mode }: AuthPageProps) {
       navigate(from?.startsWith("/") ? from : "/workspaces", { replace: true });
     } catch (submissionError) {
       setError(
-        submissionError instanceof Error ? submissionError.message : "Authentication failed."
+        submissionError instanceof Error ? submissionError.message : "Anmeldung fehlgeschlagen."
       );
       setIsSubmitting(false);
     }
@@ -46,22 +46,22 @@ export function AuthPage({ mode }: AuthPageProps) {
           <span>CipherSpace</span>
         </div>
         <div>
-          <p className="eyebrow">Encrypted collaboration, built in the open</p>
-          <h1>A quiet workspace for sensitive team thinking.</h1>
+          <p className="eyebrow">Verschlüsselte Zusammenarbeit</p>
+          <h1>Notizen teilen, ohne ihren Inhalt offenzulegen.</h1>
           <p>
-            Notes save locally first. Unlock a workspace key when you are ready to encrypt and
-            sync pending changes to the CipherSpace API.
+            Notizen werden zuerst lokal gespeichert. Mit dem Workspace-Schlüssel verschlüsselt
+            CipherSpace ausstehende Änderungen, bevor sie synchronisiert werden.
           </p>
         </div>
       </section>
       <section className="auth-panel" aria-labelledby="auth-title">
         <div>
-          <p className="eyebrow">{isLogin ? "Welcome back" : "Create your account"}</p>
-          <h2 id="auth-title">{isLogin ? "Sign in" : "Register"}</h2>
+          <p className="eyebrow">{isLogin ? "Weiterarbeiten" : "Neuer Zugang"}</p>
+          <h2 id="auth-title">{isLogin ? "Anmelden" : "Account erstellen"}</h2>
         </div>
         <form className="form-stack" onSubmit={(event) => void handleSubmit(event)}>
           <label>
-            Email address
+            E-Mail-Adresse
             <input
               autoComplete="email"
               maxLength={254}
@@ -72,7 +72,7 @@ export function AuthPage({ mode }: AuthPageProps) {
             />
           </label>
           <label>
-            Password
+            Passwort
             <input
               autoComplete={isLogin ? "current-password" : "new-password"}
               maxLength={128}
@@ -82,17 +82,17 @@ export function AuthPage({ mode }: AuthPageProps) {
               type="password"
               value={password}
             />
-            <small>12–128 characters</small>
+            <small>12–128 Zeichen</small>
           </label>
           {error ? <div className="form-error" role="alert">{error}</div> : null}
           <button className="button button--primary button--full" disabled={isSubmitting}>
-            {isSubmitting ? "Please wait…" : isLogin ? "Sign in" : "Create account"}
+            {isSubmitting ? "Einen Moment…" : isLogin ? "Anmelden" : "Account erstellen"}
           </button>
         </form>
         <p className="auth-switch">
-          {isLogin ? "New to CipherSpace?" : "Already have an account?"}{" "}
+          {isLogin ? "Noch kein Account?" : "Schon registriert?"}{" "}
           <Link to={isLogin ? "/register" : "/login"}>
-            {isLogin ? "Create an account" : "Sign in"}
+            {isLogin ? "Account erstellen" : "Anmelden"}
           </Link>
         </p>
       </section>

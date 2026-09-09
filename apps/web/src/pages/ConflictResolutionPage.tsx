@@ -22,29 +22,29 @@ function VersionMetadata({ label, version }: { label: string; version: LocalNote
       <h3>{label}</h3>
       <dl>
         <div><dt>Version</dt><dd>{version.version_number}</dd></div>
-        <div><dt>Version ID</dt><dd className="mono">{version.id}</dd></div>
-        <div><dt>Parent version</dt><dd className="mono">{version.parent_version_id ?? "None"}</dd></div>
-        <div><dt>Created</dt><dd>{formatDate(version.created_at)}</dd></div>
-        <div><dt>Author ID</dt><dd className="mono">{version.created_by}</dd></div>
+        <div><dt>Versions-ID</dt><dd className="mono">{version.id}</dd></div>
+        <div><dt>Vorgängerversion</dt><dd className="mono">{version.parent_version_id ?? "Keine"}</dd></div>
+        <div><dt>Erstellt</dt><dd>{formatDate(version.created_at)}</dd></div>
+        <div><dt>Autor-ID</dt><dd className="mono">{version.created_by}</dd></div>
       </dl>
     </div>
   );
 }
 
 function NoteSnapshot({ payload }: { payload: LocalNotePayload | null }) {
-  if (!payload) return <p className="local-only-message">No editable note snapshot is available.</p>;
+  if (!payload) return <p className="local-only-message">Keine bearbeitbare Fassung verfügbar.</p>;
   return (
     <div className="conflict-snapshot">
       <strong>{payload.title}</strong>
-      <pre>{payload.body || "(Empty note body)"}</pre>
+      <pre>{payload.body || "(Notiz ohne Inhalt)"}</pre>
     </div>
   );
 }
 
 function resolutionLabel(resolution: ConflictResolution): string {
-  if (resolution === "keep_local") return "kept the local version";
-  if (resolution === "accept_remote") return "accepted the remote version";
-  return "saved a manual merge";
+  if (resolution === "keep_local") return "Lokale Fassung beibehalten";
+  if (resolution === "accept_remote") return "Serverfassung übernommen";
+  return "Zusammengeführte Fassung gespeichert";
 }
 
 export function ConflictResolutionPage() {
@@ -97,7 +97,7 @@ export function ConflictResolutionPage() {
       .catch((error: unknown) => {
         if (active) {
           setDecryptError(
-            error instanceof Error ? error.message : "The remote version could not be decrypted."
+            error instanceof Error ? error.message : "Die Serverfassung konnte nicht entschlüsselt werden."
           );
         }
       });
@@ -114,7 +114,7 @@ export function ConflictResolutionPage() {
     try {
       const key = await workspaceKey.getKey();
       if (resolution === "keep_local") {
-        if (!localPayload) throw new Error("Unlock and decrypt the local version first.");
+        if (!localPayload) throw new Error("Entsperre und entschlüssle zuerst die lokale Fassung.");
         await localData.resolveEncryptedConflict(
           conflict.id,
           { action: "keep_local" },
@@ -122,7 +122,7 @@ export function ConflictResolutionPage() {
           key
         );
       } else if (resolution === "accept_remote") {
-        if (!remotePayload) throw new Error("Unlock and decrypt the remote version first.");
+        if (!remotePayload) throw new Error("Entsperre und entschlüssle zuerst die Serverfassung.");
         await localData.resolveEncryptedConflict(
           conflict.id,
           { action: "accept_remote", remote_payload: remotePayload },
@@ -130,7 +130,7 @@ export function ConflictResolutionPage() {
           key
         );
       } else {
-        if (!mergedPayload) throw new Error("Enter the merged note content first.");
+        if (!mergedPayload) throw new Error("Gib zuerst den zusammengeführten Inhalt ein.");
         await localData.resolveEncryptedConflict(
           conflict.id,
           { action: "manual_merge", merged_payload: mergedPayload },
@@ -140,7 +140,7 @@ export function ConflictResolutionPage() {
       }
       setResolvedWith(resolution);
     } catch (error) {
-      setResolutionError(error instanceof Error ? error.message : "The conflict could not be resolved.");
+      setResolutionError(error instanceof Error ? error.message : "Der Konflikt konnte nicht gelöst werden.");
     } finally {
       setIsResolving(false);
     }
@@ -151,25 +151,25 @@ export function ConflictResolutionPage() {
     void resolve("manual_merge", { body: mergeBody, title: mergeTitle.trim() });
   };
 
-  if (conflictQuery.isLoading) return <LoadingState label="Loading conflict snapshots…" />;
+  if (conflictQuery.isLoading) return <LoadingState label="Konfliktfassungen werden geladen…" />;
   if (conflictQuery.error) return <ErrorState error={conflictQuery.error} />;
   if (resolvedWith) {
     return (
       <section className="panel conflict-complete">
-        <p className="eyebrow">Conflict resolved</p>
-        <h2>You {resolutionLabel(resolvedWith)}.</h2>
+        <p className="eyebrow">Konflikt gelöst</p>
+        <h2>{resolutionLabel(resolvedWith)}</h2>
         <p>
-          The conflicting queue entries are retired and one resolved local version is now unsynced.
-          Use the workspace Sync action to encrypt and upload it.
+          Die widersprüchlichen Einträge wurden ersetzt. Eine gelöste lokale Fassung wartet jetzt
+          auf die Synchronisation.
         </p>
         <Link className="button button--primary" to={`/workspaces/${workspace.id}/notes/${noteId}`}>
-          Return to note
+          Zurück zur Notiz
         </Link>
       </section>
     );
   }
   if (!conflict) {
-    return <ErrorState error={new Error("This note has no unresolved conflict.")} />;
+    return <ErrorState error={new Error("Für diese Notiz liegt kein ungelöster Konflikt vor.")} />;
   }
 
   const canResolve = workspace.role !== "viewer" && workspaceKey.status === "unlocked";
@@ -177,20 +177,20 @@ export function ConflictResolutionPage() {
   return (
     <section className="conflict-detail">
       <Link className="back-link" to={`/workspaces/${workspace.id}/notes/${noteId}`}>
-        ← Back to note
+        ← Zurück zur Notiz
       </Link>
       <header className="page-header page-header--compact">
         <div>
-          <p className="eyebrow">Manual conflict resolution</p>
-          <h2>Choose the note content to keep</h2>
-          <p>Nothing is overwritten until you explicitly save one of these choices.</p>
+          <p className="eyebrow">Manuelle Konfliktlösung</p>
+          <h2>Wähle die Fassung, die erhalten bleiben soll</h2>
+          <p>Erst beim Speichern wird eine der Fassungen übernommen.</p>
         </div>
-        <span className="conflict-badge">Conflict unresolved</span>
+        <span className="conflict-badge">Konflikt offen</span>
       </header>
 
       {workspaceKey.status !== "unlocked" ? (
         <div className="warning-callout" role="status">
-          Unlock the workspace above to decrypt the server version and enable resolution actions.
+          Entsperre oben den Workspace, um die Serverfassung zu entschlüsseln.
         </div>
       ) : null}
       {decryptError ? <div className="form-error" role="alert">{decryptError}</div> : null}
@@ -198,7 +198,7 @@ export function ConflictResolutionPage() {
 
       <div className="conflict-columns">
         <section className="panel conflict-choice">
-          <p className="eyebrow">Local version · revision {conflict.local_revision}</p>
+          <p className="eyebrow">Lokale Fassung · Revision {conflict.local_revision}</p>
           <NoteSnapshot payload={workspaceKey.status === "unlocked" ? localPayload : null} />
           <button
             className="button button--secondary button--full"
@@ -206,14 +206,14 @@ export function ConflictResolutionPage() {
             onClick={() => void resolve("keep_local")}
             type="button"
           >
-            Keep local
+            Lokal beibehalten
           </button>
         </section>
 
         <section className="panel conflict-choice">
-          <p className="eyebrow">Remote version · server {conflict.remote_version.version_number}</p>
+          <p className="eyebrow">Serverfassung · Version {conflict.remote_version.version_number}</p>
           {workspaceKey.status === "unlocked" && !remotePayload && !decryptError ? (
-            <LoadingState label="Decrypting remote version…" />
+            <LoadingState label="Serverfassung wird entschlüsselt…" />
           ) : (
             <NoteSnapshot
               payload={workspaceKey.status === "unlocked" ? remotePayload : null}
@@ -225,17 +225,17 @@ export function ConflictResolutionPage() {
             onClick={() => void resolve("accept_remote")}
             type="button"
           >
-            Accept remote
+            Serverfassung übernehmen
           </button>
         </section>
       </div>
 
       <section className="panel conflict-merge">
-        <p className="eyebrow">Manual merge</p>
-        <h2>Edit a resolved version</h2>
+        <p className="eyebrow">Manuell zusammenführen</p>
+        <h2>Gemeinsame Fassung bearbeiten</h2>
         <form className="form-stack" onSubmit={handleManualMerge}>
           <label>
-            Title
+            Titel
             <input
               disabled={!canResolve || isResolving}
               maxLength={200}
@@ -245,7 +245,7 @@ export function ConflictResolutionPage() {
             />
           </label>
           <label>
-            Note body
+            Inhalt
             <textarea
               disabled={!canResolve || isResolving}
               onChange={(event) => setMergeBody(event.target.value)}
@@ -257,26 +257,26 @@ export function ConflictResolutionPage() {
             className="button button--primary"
             disabled={!canResolve || isResolving || !mergeTitle.trim()}
           >
-            {isResolving ? "Saving resolution…" : "Save manual merge"}
+            {isResolving ? "Lösung wird gespeichert…" : "Zusammenführung speichern"}
           </button>
         </form>
       </section>
 
       <section className="panel conflict-history">
-        <p className="eyebrow">Conflict metadata</p>
+        <p className="eyebrow">Konflikt-Metadaten</p>
         <div className="conflict-metadata-grid">
-          <VersionMetadata label="Remote/server version" version={conflict.remote_version} />
+          <VersionMetadata label="Serverfassung" version={conflict.remote_version} />
           {conflict.base_version ? (
-            <VersionMetadata label="Base version" version={conflict.base_version} />
+            <VersionMetadata label="Basisversion" version={conflict.base_version} />
           ) : (
             <div>
-              <h3>Base version</h3>
-              <p className="mono">{conflict.base_version_id ?? "No server base"}</p>
-              <p>The full base-version metadata was not cached when this conflict was detected.</p>
+              <h3>Basisversion</h3>
+              <p className="mono">{conflict.base_version_id ?? "Keine Serverbasis"}</p>
+              <p>Beim Erkennen des Konflikts waren nicht alle Metadaten der Basisversion gespeichert.</p>
             </div>
           )}
         </div>
-        <p className="conflict-detected-at">Detected {formatDate(conflict.detected_at)}</p>
+        <p className="conflict-detected-at">Erkannt am {formatDate(conflict.detected_at)}</p>
       </section>
     </section>
   );

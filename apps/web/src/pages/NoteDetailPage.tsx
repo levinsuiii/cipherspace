@@ -89,7 +89,7 @@ export function NoteDetailPage() {
         }
         if (note.local_note_payload) return note.local_note_payload;
         if (latestVersion) return decryptCachedNoteVersion(latestVersion, key);
-        throw new Error("This note has no encrypted content to decrypt.");
+        throw new Error("Für diese Notiz ist kein verschlüsselter Inhalt vorhanden.");
       })
       .then((payload) => {
         if (!active) return;
@@ -100,7 +100,7 @@ export function NoteDetailPage() {
       .catch(() => {
         if (active) {
           setDecryptError(
-            "This note could not be decrypted. The workspace may be using a different key."
+            "Die Notiz konnte nicht entschlüsselt werden. Möglicherweise verwendet der Workspace einen anderen Schlüssel."
           );
         }
       })
@@ -119,12 +119,12 @@ export function NoteDetailPage() {
   ]);
 
   if (!note && (localNoteQuery.isLoading || serverNoteQuery.isLoading || serverNoteQuery.isSuccess)) {
-    return <LoadingState label="Loading local note…" />;
+    return <LoadingState label="Lokale Notiz wird geladen…" />;
   }
   if (!note && serverNoteQuery.isError) {
     return <ErrorState error={serverNoteQuery.error} onRetry={() => void serverNoteQuery.refetch()} />;
   }
-  if (!note) return <ErrorState error={new Error("Note not found in the local cache.")} />;
+  if (!note) return <ErrorState error={new Error("Die Notiz wurde im lokalen Speicher nicht gefunden.")} />;
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -138,9 +138,9 @@ export function NoteDetailPage() {
       const payload = { body, title: trimmedTitle };
       const key = await workspaceKey.getKey();
       await localData.editEncryptedNote(note.id, payload, key);
-      setSaveMessage("Saved locally. This change is queued for sync.");
+      setSaveMessage("Lokal gespeichert. Die Änderung wartet auf die Synchronisation.");
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save the local note.");
+      setSaveError(error instanceof Error ? error.message : "Die Notiz konnte nicht lokal gespeichert werden.");
     } finally {
       setIsSaving(false);
     }
@@ -153,65 +153,65 @@ export function NoteDetailPage() {
       await localData.deleteNote(note.id);
       navigate(`/workspaces/${workspace.id}/notes`, { replace: true });
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not delete the local note.");
+      setSaveError(error instanceof Error ? error.message : "Die Notiz konnte nicht lokal gelöscht werden.");
       setIsDeleting(false);
     }
   };
 
   const displayTitle = workspaceKey.status === "unlocked"
-    ? decryptedPayload?.title ?? shortenOpaqueValue(note.encrypted_title, "Encrypted note")
-    : "Encrypted note";
+    ? decryptedPayload?.title ?? shortenOpaqueValue(note.encrypted_title, "Verschlüsselte Notiz")
+    : "Verschlüsselte Notiz";
 
   return (
     <section className="note-detail">
-      <Link className="back-link" to={`/workspaces/${workspace.id}/notes`}>← Back to notes</Link>
+      <Link className="back-link" to={`/workspaces/${workspace.id}/notes`}>← Zurück zu den Notizen</Link>
       {serverNoteQuery.isError ? (
         <div className="offline-callout" role="status">
-          The server is unavailable. Editing continues against the durable local copy.
+          Der Server ist nicht erreichbar. Du arbeitest mit der dauerhaft gespeicherten lokalen Kopie weiter.
         </div>
       ) : null}
       <header className="page-header page-header--compact">
         <div>
-          <p className="eyebrow">Local note editor</p>
+          <p className="eyebrow">Lokaler Editor</p>
           <h2>{displayTitle}</h2>
-          <p>Every save updates IndexedDB before a sync attempt can occur.</p>
+          <p>Jeder Speichervorgang aktualisiert zuerst die lokale Datenbank.</p>
         </div>
         {hasConflict ? (
           <Link
             className="conflict-badge"
             to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}
           >
-            Resolve conflict
+            Konflikt lösen
           </Link>
         ) : (pendingCountQuery.data ?? 0) > 0 ? (
-          <span className="unsynced-badge">{pendingCountQuery.data} unsynced</span>
+          <span className="unsynced-badge">{pendingCountQuery.data} ausstehend</span>
         ) : (
           <span className="version-badge">
-            {latestVersion ? `Server version ${latestVersion.version_number}` : "Local only"}
+            {latestVersion ? `Serverversion ${latestVersion.version_number}` : "Nur lokal"}
           </span>
         )}
       </header>
 
       {hasConflict ? (
         <div className="warning-callout">
-          Local editing is paused for this note so neither side is changed accidentally. Review
-          the local and server versions, then choose a resolution.
-          {" "}<Link to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}>Open conflict resolution</Link>
+          Die Bearbeitung pausiert, damit keine Fassung versehentlich überschrieben wird. Vergleiche
+          die lokale Fassung mit der Serverfassung.
+          {" "}<Link to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}>Konflikt öffnen</Link>
         </div>
       ) : null}
 
       {note.local_encrypted_payload || note.local_note_payload || latestVersion ? (
         workspaceKey.status !== "unlocked" ? (
           <div className="warning-callout" role="status">
-            This note is encrypted on this device. Unlock the workspace key above to read it.
+            Diese Notiz ist auf dem Gerät verschlüsselt. Entsperre oben den Workspace-Schlüssel.
           </div>
         ) : isDecrypting ? (
-          <div className="info-callout" role="status">Decrypting the note in memory…</div>
+          <div className="info-callout" role="status">Notiz wird im Arbeitsspeicher entschlüsselt…</div>
         ) : decryptError ? (
           <div className="form-error" role="alert">{decryptError}</div>
         ) : decryptedPayload ? (
           <div className="info-callout" role="status">
-            Decrypted in memory. Lock the workspace to clear the readable editor state.
+            Im Arbeitsspeicher entschlüsselt. Beim Sperren wird der lesbare Editorzustand entfernt.
           </div>
         ) : null
       ) : null}
@@ -220,22 +220,22 @@ export function NoteDetailPage() {
         <section className="panel">
           <form className="form-stack note-editor" onSubmit={(event) => void handleSave(event)}>
             <label>
-              Title
+              Titel
               <input
                 disabled={!canEdit}
                 maxLength={200}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder={hasReadablePayload ? "Note title" : "Unlock to decrypt this note"}
+                placeholder={hasReadablePayload ? "Titel der Notiz" : "Zum Entschlüsseln entsperren"}
                 required
                 value={workspaceKey.status === "unlocked" ? title : ""}
               />
             </label>
             <label>
-              Note body
+              Inhalt
               <textarea
                 disabled={!canEdit}
                 onChange={(event) => setBody(event.target.value)}
-                placeholder={hasReadablePayload ? "Write locally…" : "Unlock to decrypt this note."}
+                placeholder={hasReadablePayload ? "Lokal schreiben…" : "Zum Entschlüsseln entsperren."}
                 rows={18}
                 value={workspaceKey.status === "unlocked" ? body : ""}
               />
@@ -245,7 +245,7 @@ export function NoteDetailPage() {
             {canEdit ? (
               <div className="editor-actions">
                 <button className="button button--primary" disabled={isSaving || !title.trim()}>
-                  {isSaving ? "Saving locally…" : "Save local change"}
+                  {isSaving ? "Wird lokal gespeichert…" : "Änderung speichern"}
                 </button>
                 {canDelete ? (
                   <button
@@ -254,7 +254,7 @@ export function NoteDetailPage() {
                     onClick={() => void handleDelete()}
                     type="button"
                   >
-                    {isDeleting ? "Deleting locally…" : "Delete locally"}
+                    {isDeleting ? "Wird lokal gelöscht…" : "Lokal löschen"}
                   </button>
                 ) : null}
               </div>
@@ -263,34 +263,34 @@ export function NoteDetailPage() {
                 className="button button--primary"
                 to={`/workspaces/${workspace.id}/notes/${note.id}/conflict`}
               >
-                Resolve conflict
+                Konflikt lösen
               </Link>
             ) : workspace.role === "viewer" ? (
-              <p className="read-only-message">Viewer access is read-only.</p>
+              <p className="read-only-message">Als Leser kannst du diese Notiz nicht bearbeiten.</p>
             ) : (
-              <p className="read-only-message">Unlock and decrypt this note before editing it.</p>
+              <p className="read-only-message">Entsperre und entschlüssle die Notiz vor dem Bearbeiten.</p>
             )}
           </form>
         </section>
         <aside className="panel workspace-summary">
-          <h3>Local record</h3>
+          <h3>Lokaler Datensatz</h3>
           <dl>
-            <div><dt>Updated</dt><dd>{formatDate(note.updated_at)}</dd></div>
-            <div><dt>Local revision</dt><dd>{note.local_revision}</dd></div>
-            <div><dt>Base version ID</dt><dd className="mono">{note.base_version_id ?? "Local only"}</dd></div>
-            <div><dt>Note ID</dt><dd className="mono">{note.id}</dd></div>
+            <div><dt>Aktualisiert</dt><dd>{formatDate(note.updated_at)}</dd></div>
+            <div><dt>Lokale Revision</dt><dd>{note.local_revision}</dd></div>
+            <div><dt>Basisversions-ID</dt><dd className="mono">{note.base_version_id ?? "Nur lokal"}</dd></div>
+            <div><dt>Notiz-ID</dt><dd className="mono">{note.id}</dd></div>
           </dl>
           {latestVersion ? (
             <details className="cached-envelope">
-              <summary>Cached server envelope</summary>
+              <summary>Gespeicherter Server-Umschlag</summary>
               <dl>
                 <div><dt>Version</dt><dd>{latestVersion.version_number}</dd></div>
-                <div><dt>Algorithm</dt><dd>{latestVersion.encryption_algorithm}</dd></div>
-                <div><dt>Key ID</dt><dd className="mono">{latestVersion.key_id}</dd></div>
+                <div><dt>Algorithmus</dt><dd>{latestVersion.encryption_algorithm}</dd></div>
+                <div><dt>Schlüssel-ID</dt><dd className="mono">{latestVersion.key_id}</dd></div>
               </dl>
             </details>
           ) : (
-            <p className="local-only-message">This note has no cached server version.</p>
+            <p className="local-only-message">Für diese Notiz ist keine Serverversion gespeichert.</p>
           )}
         </aside>
       </div>

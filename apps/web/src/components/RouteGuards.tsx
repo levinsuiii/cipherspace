@@ -8,10 +8,10 @@ export function ProtectedRoute() {
   const location = useLocation();
 
   if (auth.isLoading) {
-    return <LoadingState label="Checking your session…" />;
+    return <LoadingState label="Sitzung wird geprüft…" />;
   }
   if (auth.error) {
-    return <ErrorState error={auth.error} title="Could not reach CipherSpace" />;
+    return <ErrorState error={auth.error} title="CipherSpace ist nicht erreichbar" />;
   }
   if (!auth.user) {
     return <Navigate replace state={{ from: location.pathname }} to="/login" />;
@@ -23,7 +23,7 @@ export function PublicOnlyRoute() {
   const auth = useAuth();
 
   if (auth.isLoading) {
-    return <LoadingState label="Checking your session…" />;
+    return <LoadingState label="Sitzung wird geprüft…" />;
   }
   if (auth.user) {
     return <Navigate replace to="/workspaces" />;

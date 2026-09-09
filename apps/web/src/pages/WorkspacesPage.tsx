@@ -8,7 +8,7 @@ import { EncryptionIdentitySetup } from "../components/EncryptionIdentitySetup";
 import type { UserCryptoIdentityStatus } from "../key-management/userIdentity";
 import { useLocalData, useLocalQuery } from "../local-storage/LocalDataContext";
 import { queryKeys } from "../queryKeys";
-import { formatDate } from "../utils";
+import { formatDate, workspaceRoleLabel } from "../utils";
 
 export function WorkspacesPage() {
   const navigate = useNavigate();
@@ -52,9 +52,9 @@ export function WorkspacesPage() {
     <section>
       <header className="page-header">
         <div>
-          <p className="eyebrow">Your collaboration spaces</p>
+          <p className="eyebrow">Deine Arbeitsbereiche</p>
           <h1>Workspaces</h1>
-          <p>Create a workspace or return to one you already belong to.</p>
+          <p>Öffne einen bestehenden Workspace oder lege einen neuen an.</p>
         </div>
       </header>
 
@@ -63,7 +63,7 @@ export function WorkspacesPage() {
       <div className="split-layout">
         <div>
           {cachedWorkspacesQuery.isLoading && workspacesQuery.isLoading ? (
-            <LoadingState label="Loading workspaces…" />
+            <LoadingState label="Workspaces werden geladen…" />
           ) : null}
           {workspacesQuery.isError && workspaces.length === 0 ? (
             <ErrorState
@@ -73,13 +73,13 @@ export function WorkspacesPage() {
           ) : null}
           {workspacesQuery.isError && workspaces.length > 0 ? (
             <div className="offline-callout" role="status">
-              Showing cached workspaces while the server is unavailable.
+              Der Server ist nicht erreichbar. Gespeicherte Workspaces bleiben verfügbar.
             </div>
           ) : null}
           {workspaces.length === 0 && !workspacesQuery.isLoading && !workspacesQuery.isError ? (
             <EmptyState
-              description="Create your first workspace using the form on this page."
-              title="No workspaces yet"
+              description="Lege rechts deinen ersten Workspace an."
+              title="Noch kein Workspace vorhanden"
             />
           ) : null}
           {workspaces.length ? (
@@ -93,10 +93,10 @@ export function WorkspacesPage() {
                     <div>
                       <h2>{workspace.name}</h2>
                       <span className={`role-badge role-badge--${workspace.role}`}>
-                        {workspace.role}
+                        {workspaceRoleLabel(workspace.role)}
                       </span>
                     </div>
-                    <p>Updated {formatDate(workspace.updated_at)}</p>
+                    <p>Aktualisiert am {formatDate(workspace.updated_at)}</p>
                   </div>
                   <span className="card-arrow" aria-hidden="true">→</span>
                 </Link>
@@ -106,22 +106,22 @@ export function WorkspacesPage() {
         </div>
 
         <aside className="panel panel--sticky">
-          <p className="eyebrow">New workspace</p>
-          <h2>Create a workspace</h2>
-          <p>Workspace names are visible to the server and all members.</p>
+          <p className="eyebrow">Neuer Workspace</p>
+          <h2>Workspace erstellen</h2>
+          <p>Der Name ist für den Server und alle Mitglieder sichtbar.</p>
           {identityStatus !== "ready" ? (
             <div className="warning-callout" role="status">
-              Set up or restore this device's encryption identity before creating a workspace.
+              Richte zuerst die Verschlüsselungsidentität für dieses Gerät ein oder stelle sie wieder her.
             </div>
           ) : null}
           <form className="form-stack" onSubmit={handleCreate}>
             <label>
-              Workspace name
+              Workspace-Name
               <input
                 autoFocus
                 maxLength={100}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="Research lab"
+                placeholder="Studienprojekt"
                 required
                 value={name}
               />
@@ -135,7 +135,7 @@ export function WorkspacesPage() {
                 createMutation.isPending || !name.trim() || identityStatus !== "ready"
               }
             >
-              {createMutation.isPending ? "Creating…" : "Create workspace"}
+              {createMutation.isPending ? "Wird erstellt…" : "Workspace erstellen"}
             </button>
           </form>
         </aside>

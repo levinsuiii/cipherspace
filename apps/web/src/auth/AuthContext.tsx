@@ -70,7 +70,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       value={{
         ensureIdentity: async (accountPassword) => {
           const user = queryClient.getQueryData<User>(authQueryKey);
-          if (!user) throw new Error("Sign in before setting up an encryption identity.");
+          if (!user) throw new Error("Melde dich an, bevor du eine Verschlüsselungsidentität einrichtest.");
           try {
             await ensureLocalUserCryptoIdentity(user, accountPassword);
             setIdentityError(null);

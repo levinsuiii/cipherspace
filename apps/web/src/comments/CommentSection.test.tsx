@@ -110,10 +110,10 @@ describe("CommentSection", () => {
     renderSection();
     expect(await screen.findByText("Existing encrypted comment")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Comment"), {
+    fireEvent.change(screen.getByLabelText("Kommentar"), {
       target: { value: "New plaintext comment" }
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kommentar hinzufügen" }));
 
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     const transported = create.mock.calls[0]![2];
@@ -141,22 +141,22 @@ describe("CommentSection", () => {
       </QueryClientProvider>
     );
 
-    expect(await screen.findByText(/Viewers can read discussion/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Comment")).not.toBeInTheDocument();
+    expect(await screen.findByText(/Leser können Kommentare lesen/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Kommentar")).not.toBeInTheDocument();
   });
 
   it("clears a plaintext comment draft immediately when the workspace locks", async () => {
     vi.spyOn(api.comments, "list").mockResolvedValue({ comments: [] });
     vi.spyOn(api.workspaces, "listMembers").mockResolvedValue({ members: [] });
     const rendered = renderSection();
-    const draft = await screen.findByLabelText("Comment");
+    const draft = await screen.findByLabelText("Kommentar");
     fireEvent.change(draft, { target: { value: "unique plaintext draft marker" } });
     expect(draft).toHaveValue("unique plaintext draft marker");
 
     mocks.status = "locked";
     rendered.rerenderSection();
 
-    await waitFor(() => expect(screen.getByLabelText("Comment")).toHaveValue(""));
+    await waitFor(() => expect(screen.getByLabelText("Kommentar")).toHaveValue(""));
     expect(screen.queryByDisplayValue("unique plaintext draft marker")).not.toBeInTheDocument();
   });
 });

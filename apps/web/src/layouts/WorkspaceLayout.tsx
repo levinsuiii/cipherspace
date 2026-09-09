@@ -18,6 +18,7 @@ import { queryKeys } from "../queryKeys";
 import { NoteSyncEngine } from "../sync/engine";
 import { useAuth } from "../auth/AuthContext";
 import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
+import { workspaceRoleLabel } from "../utils";
 
 export interface WorkspaceOutletContext {
   workspace: Workspace;
@@ -101,7 +102,7 @@ export function WorkspaceLayout() {
           setLocalEncryptionError(
             caught instanceof Error
               ? caught.message
-              : "Existing local data could not be migrated to encrypted storage."
+              : "Lokale Bestandsdaten konnten nicht in den verschlüsselten Speicher übertragen werden."
           );
         }
       })
@@ -133,10 +134,10 @@ export function WorkspaceLayout() {
   const serverUnavailable = workspaceError instanceof TypeError;
 
   const requireLocalIdentity = async () => {
-    if (!user) throw new Error("Sign in before using encrypted workspace sharing.");
+    if (!user) throw new Error("Melde dich an, bevor du verschlüsselten Workspace-Zugriff teilst.");
     const identity = await readLocalUserCryptoIdentity(user.id);
     if (!identity) {
-      throw new Error("Set up your encryption identity from the workspaces page first.");
+      throw new Error("Richte zuerst auf der Workspace-Seite deine Verschlüsselungsidentität ein.");
     }
     return identity;
   };
@@ -182,16 +183,16 @@ export function WorkspaceLayout() {
   };
 
   if (!workspace && (workspaceQuery.isLoading || cachedWorkspaceQuery.isLoading)) {
-    return <LoadingState label="Loading workspace…" />;
+    return <LoadingState label="Workspace wird geladen…" />;
   }
   if (!workspace && workspaceQuery.isError) {
     return <ErrorState error={workspaceQuery.error} onRetry={() => void workspaceQuery.refetch()} />;
   }
   if (!workspace) {
-    return <ErrorState error={new Error("Workspace not found.")} />;
+    return <ErrorState error={new Error("Workspace nicht gefunden.")} />;
   }
   if (legacyPlaintextQuery.isLoading) {
-    return <LoadingState label="Checking local storage for legacy plaintext…" />;
+    return <LoadingState label="Lokaler Speicher wird auf ältere Klartextdaten geprüft…" />;
   }
   if (legacyPlaintextQuery.error) {
     return <ErrorState error={legacyPlaintextQuery.error} />;
@@ -211,9 +212,9 @@ export function WorkspaceLayout() {
         onUnlock={workspaceKey.unlock}
         pendingCount={pendingChangesQuery.data ?? 0}
       />
-      <nav className="tabs" aria-label="Workspace navigation">
-        <NavLink end to={`/workspaces/${workspace.id}`}>Overview</NavLink>
-        <NavLink to={`/workspaces/${workspace.id}/notes`}>Notes</NavLink>
+      <nav className="tabs" aria-label="Workspace-Navigation">
+        <NavLink end to={`/workspaces/${workspace.id}`}>Übersicht</NavLink>
+        <NavLink to={`/workspaces/${workspace.id}/notes`}>Notizen</NavLink>
       </nav>
       <Outlet context={{ workspace } satisfies WorkspaceOutletContext} />
     </>
@@ -223,33 +224,33 @@ export function WorkspaceLayout() {
     <section>
       {serverUnavailable ? (
         <div className="offline-callout" role="status">
-          The server is unavailable. Showing the local workspace cache; note edits still save on
-          this device.
+          Der Server ist nicht erreichbar. Der lokale Workspace bleibt verfügbar; Änderungen
+          werden weiterhin auf diesem Gerät gespeichert.
         </div>
       ) : null}
       {workspaceQuery.isError && !serverUnavailable ? (
         <div className="form-error" role="alert">
           {workspaceError instanceof ApiError
             ? workspaceError.message
-            : "The workspace could not be refreshed from the server."}
+            : "Der Workspace konnte nicht vom Server aktualisiert werden."}
         </div>
       ) : null}
       <div className="breadcrumb"><NavLink to="/workspaces">Workspaces</NavLink><span>/</span></div>
       <header className="workspace-header">
         <div>
-          <p className="eyebrow">{workspace.role} access</p>
+          <p className="eyebrow">Zugriff: {workspaceRoleLabel(workspace.role)}</p>
           <h1>{workspace.name}</h1>
         </div>
         <div className="status-badges">
           {(conflictsQuery.data ?? 0) > 0 ? (
-            <span className="conflict-badge">{conflictsQuery.data} conflicts</span>
+            <span className="conflict-badge">{conflictsQuery.data} Konflikte</span>
           ) : null}
           {(pendingChangesQuery.data ?? 0) > 0 ? (
             <span className="unsynced-badge">
-              {pendingChangesQuery.data} unsynced
+              {pendingChangesQuery.data} ausstehend
             </span>
           ) : null}
-          <span className={`role-badge role-badge--${workspace.role}`}>{workspace.role}</span>
+          <span className={`role-badge role-badge--${workspace.role}`}>{workspaceRoleLabel(workspace.role)}</span>
         </div>
       </header>
       <LegacyPlaintextGate

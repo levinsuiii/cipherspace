@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "CipherSpace Encrypted Workspace",
+  "name": "CipherSpace – verschlüsselter Workspace",
   "short_name": "CipherSpace",
-  "description": "A local-first encrypted collaboration workspace for notes and discussions.",
+  "description": "Ein lokal arbeitender, verschlüsselter Workspace für Notizen und Diskussionen.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

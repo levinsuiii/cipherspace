@@ -165,10 +165,10 @@ describe("NoteDetailPage decryption", () => {
     expect(await screen.findByDisplayValue("Readable server title")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Readable server body")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Readable server title" })).toBeInTheDocument();
-    expect(screen.getByText(/Decrypted in memory/)).toBeInTheDocument();
+    expect(screen.getByText(/Im Arbeitsspeicher entschlüsselt/)).toBeInTheDocument();
     expect(mocks.decryptRemote).toHaveBeenCalledWith(mocks.version, expect.anything());
 
-    fireEvent.click(screen.getByRole("button", { name: "Save local change" }));
+    fireEvent.click(screen.getByRole("button", { name: "Änderung speichern" }));
     await waitFor(() => expect(mocks.editEncryptedNote).toHaveBeenCalledWith(
       noteId,
       { body: "Readable server body", title: "Readable server title" },
@@ -181,12 +181,12 @@ describe("NoteDetailPage decryption", () => {
     mocks.note!.local_note_payload = { body: "must stay hidden", title: "Hidden title" };
     renderPage();
 
-    expect(screen.getByText(/Unlock the workspace key above/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Encrypted note" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Title")).toBeDisabled();
-    expect(screen.getByLabelText("Title")).toHaveValue("");
-    expect(screen.getByLabelText("Note body")).toBeDisabled();
-    expect(screen.getByLabelText("Note body")).toHaveValue("");
+    expect(screen.getByText(/Entsperre oben den Workspace-Schlüssel/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Verschlüsselte Notiz" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Titel")).toBeDisabled();
+    expect(screen.getByLabelText("Titel")).toHaveValue("");
+    expect(screen.getByLabelText("Inhalt")).toBeDisabled();
+    expect(screen.getByLabelText("Inhalt")).toHaveValue("");
     expect(screen.queryByText("Hidden title")).not.toBeInTheDocument();
     expect(mocks.decryptRemote).not.toHaveBeenCalled();
   });
@@ -195,8 +195,8 @@ describe("NoteDetailPage decryption", () => {
     mocks.decryptRemote.mockRejectedValue(new Error("authentication failed"));
     renderPage();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("different key");
-    expect(screen.getByLabelText("Title")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Save local change" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("anderen Schlüssel");
+    expect(screen.getByLabelText("Titel")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Änderung speichern" })).not.toBeInTheDocument();
   });
 });

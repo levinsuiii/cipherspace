@@ -21,7 +21,7 @@ export type WorkspaceKeyStatus = "checking" | "locked" | "missing" | "unlocked";
 
 export class WorkspaceLockedError extends Error {
   public constructor() {
-    super("Unlock this workspace before syncing.");
+    super("Entsperre den Workspace vor der Synchronisation.");
     this.name = "WorkspaceLockedError";
   }
 }
@@ -110,7 +110,7 @@ export function WorkspaceKeyProvider({
     async (workspaceId: string, passphrase: string) => {
       const startedAtGeneration = lockGeneration.current;
       if (await repository.get(workspaceId)) {
-        throw new Error("A protected workspace key already exists. Unlock it instead.");
+        throw new Error("Ein geschützter Workspace-Schlüssel ist bereits vorhanden. Entsperre ihn stattdessen.");
       }
       const workspaceKey = await generateWorkspaceKey();
       const protectedKey = await protectWorkspaceKey(workspaceKey, passphrase, {
@@ -135,7 +135,7 @@ export function WorkspaceKeyProvider({
     async (workspaceId: string, passphrase: string) => {
       const startedAtGeneration = lockGeneration.current;
       const stored = await repository.get(workspaceId);
-      if (!stored) throw new Error("No protected workspace key exists on this device.");
+      if (!stored) throw new Error("Auf diesem Gerät ist kein geschützter Workspace-Schlüssel vorhanden.");
       const workspaceKey = await unlockWorkspaceKey(stored.protected_key, passphrase, {
         userId,
         workspaceId
@@ -157,7 +157,7 @@ export function WorkspaceKeyProvider({
     async (workspaceId: string, workspaceKey: CryptoKey, passphrase: string) => {
       const startedAtGeneration = lockGeneration.current;
       if (await repository.get(workspaceId)) {
-        throw new Error("A protected workspace key already exists. Unlock it instead.");
+        throw new Error("Ein geschützter Workspace-Schlüssel ist bereits vorhanden. Entsperre ihn stattdessen.");
       }
       const protectedKey = await protectWorkspaceKey(workspaceKey, passphrase, {
         userId,
