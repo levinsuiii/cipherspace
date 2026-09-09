@@ -1,6 +1,6 @@
 # Architecture
 
-CipherSpace should be built as a local-first encrypted collaboration workspace with clear boundaries between domain logic, local persistence, sync, crypto, transport, and UI.
+CipherSpace is implemented as a local-first encrypted collaboration workspace with boundaries between domain logic, local persistence, synchronization, cryptography, transport, and UI.
 
 ## Goals
 
@@ -11,9 +11,9 @@ CipherSpace should be built as a local-first encrypted collaboration workspace w
 - Preserve version history.
 - Keep v1 simple enough to implement and audit.
 
-## Recommended System Architecture
+## System Architecture
 
-Recommended high-level components:
+Current high-level components:
 
 - Frontend app: React + TypeScript browser app.
 - Local persistence layer: IndexedDB through Dexie.
@@ -22,15 +22,14 @@ Recommended high-level components:
 - API client: typed HTTP client with validation at boundaries.
 - Backend API: Fastify + TypeScript.
 - Backend persistence: PostgreSQL.
-- Shared package: TypeScript domain types, API contracts, and Zod schemas shared by frontend and backend.
 
 The frontend must be able to create and edit notes while offline. Notes and comments are encrypted client-side, and the backend stores ciphertext envelopes and operational metadata without plaintext content. The backend is the synchronization authority for workspace membership, version ordering, encrypted note envelopes, and conflict reporting.
 
 This private-beta architecture mainly limits exposure from passive backend or database inspection. It is not independently security audited and does not strongly protect against malicious frontend delivery, substituted public keys, compromised devices or browser extensions, or sensitive values that JavaScript cannot perfectly clear from memory.
 
-## Recommended Repository Layout
+## Repository Layout
 
-Create this layout only when implementation begins:
+The implemented repository is organized as follows:
 
 ```text
 apps/
@@ -38,7 +37,6 @@ apps/
   api/
 packages/
   crypto/
-  shared/
 docs/
 ```
 
@@ -47,7 +45,6 @@ Suggested ownership:
 - `apps/web`: UI, IndexedDB persistence, crypto-package integration, and sync queue.
 - `apps/api`: authentication, authorization, sync endpoints, database access.
 - `packages/crypto`: isolated Web Crypto wrappers, workspace-key serialization, and encrypted note envelope validation.
-- `packages/shared`: IDs, typed data models, Zod schemas, error codes, sync payload contracts.
 
 ## Data Model
 

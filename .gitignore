@@ -30,6 +30,16 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Local development and agent instructions
+AGENTS.md
+
+# IDE and editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
 # Local database data
 *.db
 *.db-*
@@ -39,6 +49,14 @@ pnpm-debug.log*
 *.sqlite3-*
 pgdata/
 .postgres/
+
+# Private key material and local recovery exports
+*.pem
+*.key
+*.p12
+*.pfx
+*.recovery-kit.json
+cipherspace-recovery-*.json
 
 # Operating-system metadata
 .DS_Store

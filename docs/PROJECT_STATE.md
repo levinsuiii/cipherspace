@@ -173,7 +173,7 @@ Deferred until after the current collaboration slice:
 - Search over encrypted note bodies on the server.
 - Server-side plaintext processing of note content.
 
-## Recommended Tech Stack
+## Technology Stack
 
 The backend, frontend foundation, local persistence, client crypto, first sync protocol, local unlock, and v1 multi-user key sharing are installed:
 
