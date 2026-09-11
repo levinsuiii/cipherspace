@@ -1,6 +1,7 @@
 import {
   generateWorkspaceKey,
   protectWorkspaceKey,
+  type SignedWorkspaceKeyShare,
   unlockWorkspaceKey
 } from "@cipherspace/crypto";
 import {
@@ -16,6 +17,7 @@ import {
 
 import { localDatabase } from "../local-storage/database";
 import { LocalWorkspaceKeyRepository } from "../local-storage/workspaceKeyRepository";
+import { LocalAcceptedKeyShareRepository } from "../local-storage/acceptedKeyShareRepository";
 
 export type WorkspaceKeyStatus = "checking" | "locked" | "missing" | "unlocked";
 
@@ -34,7 +36,7 @@ interface WorkspaceKeyContextValue {
   getKey(workspaceId: string): Promise<CryptoKey>;
   inspect(workspaceId: string): Promise<void>;
   lock(workspaceId: string): void;
-  storeShared(workspaceId: string, workspaceKey: CryptoKey, passphrase: string): Promise<void>;
+  storeShared(workspaceId: string, workspaceKey: CryptoKey, passphrase: string, share: SignedWorkspaceKeyShare): Promise<void>;
   statusByWorkspace: ReadonlyMap<string, WorkspaceKeyStatus>;
   unlock(workspaceId: string, passphrase: string): Promise<void>;
 }
@@ -154,7 +156,7 @@ export function WorkspaceKeyProvider({
   );
 
   const storeShared = useCallback(
-    async (workspaceId: string, workspaceKey: CryptoKey, passphrase: string) => {
+    async (workspaceId: string, workspaceKey: CryptoKey, passphrase: string, share: SignedWorkspaceKeyShare) => {
       const startedAtGeneration = lockGeneration.current;
       if (await repository.get(workspaceId)) {
         throw new Error("Ein geschützter Workspace-Schlüssel ist bereits vorhanden. Entsperre ihn stattdessen.");
@@ -163,7 +165,15 @@ export function WorkspaceKeyProvider({
         userId,
         workspaceId
       });
-      await repository.add(workspaceId, protectedKey);
+      await localDatabase.transaction(
+        "rw",
+        localDatabase.workspace_keys,
+        localDatabase.accepted_key_shares,
+        async () => {
+          await repository.add(workspaceId, protectedKey);
+          await new LocalAcceptedKeyShareRepository(localDatabase, userId).record(workspaceId, share);
+        }
+      );
       if (
         lockGeneration.current !== startedAtGeneration ||
         document.visibilityState === "hidden"
@@ -221,8 +231,8 @@ export function useWorkspaceKey(workspaceId: string) {
     [context.unlock, workspaceId]
   );
   const storeShared = useCallback(
-    (workspaceKey: CryptoKey, passphrase: string) =>
-      context.storeShared(workspaceId, workspaceKey, passphrase),
+    (workspaceKey: CryptoKey, passphrase: string, share: SignedWorkspaceKeyShare) =>
+      context.storeShared(workspaceId, workspaceKey, passphrase, share),
     [context.storeShared, workspaceId]
   );
 

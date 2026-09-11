@@ -15,10 +15,10 @@ interface WorkspaceSyncControlsProps {
   keyStatus: WorkspaceKeyStatus;
   keyAccess: WorkspaceKeyAccess | null;
   legacyMigrationRequired?: boolean;
-  onCreateKey(passphrase: string): Promise<void>;
+  onCreateKey(identityPassword: string, passphrase: string): Promise<void>;
   onLock(): void;
   onSync(): Promise<SyncSummary>;
-  onSetupShared(identityPassword: string, passphrase: string): Promise<void>;
+  onSetupShared(identityPassword: string, passphrase: string, senderVerificationCode: string): Promise<void>;
   onUnlock(passphrase: string): Promise<void>;
   pendingCount: number;
 }
@@ -49,6 +49,7 @@ export function WorkspaceSyncControls({
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [identityPassword, setIdentityPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
+  const [senderVerificationCode, setSenderVerificationCode] = useState("");
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
 
   const locked = keyStatus !== "unlocked";
@@ -69,18 +70,19 @@ export function WorkspaceSyncControls({
     setIsSubmittingKey(true);
     try {
       if (keyStatus === "missing" && keyAccess?.keyShareAvailable) {
-        await onSetupShared(identityPassword, passphrase);
+        await onSetupShared(identityPassword, passphrase, senderVerificationCode.trim());
       } else if (keyStatus === "missing" && legacyMigrationRequired) {
         throw new Error(
           "Der ursprüngliche Workspace-Schlüssel ist erforderlich. Für ältere lokale Daten wird kein Ersatzschlüssel erstellt."
         );
       } else if (keyStatus === "missing" && keyAccess?.canInitialize) {
-        await onCreateKey(passphrase);
+        await onCreateKey(identityPassword, passphrase);
       }
       else await onUnlock(passphrase);
       setIdentityPassword("");
       setPassphrase("");
       setConfirmPassphrase("");
+      setSenderVerificationCode("");
       setSyncStatus("idle");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -119,7 +121,9 @@ export function WorkspaceSyncControls({
             ? keyAccess === null
               ? "Verschlüsselter Zugriff wird geprüft…"
               : keyAccess.keyShareAvailable
-              ? "Richte den Zugriff mit deiner persönlichen Schlüsselfreigabe ein."
+              ? keyAccess.keyShareProtocolVersion === 2
+                ? "Richte den Zugriff mit deiner persönlichen Schlüsselfreigabe ein."
+                : "Deine ältere Schlüsselfreigabe muss von einem verifizierten Besitzer neu ausgestellt werden."
               : keyAccess.canInitialize
                 ? "Erstelle den ersten Schlüssel für diesen noch leeren Workspace."
                 : "Auf diesem Gerät ist weder ein lokaler Schlüssel noch eine Freigabe vorhanden."
@@ -137,7 +141,7 @@ export function WorkspaceSyncControls({
 
       {keyStatus === "missing" && keyAccess === null ? (
         <div className="info-callout" role="status">Verschlüsselter Zugriff wird geprüft…</div>
-      ) : keyStatus === "missing" && keyAccess?.keyShareAvailable ? (
+      ) : keyStatus === "missing" && keyAccess?.keyShareAvailable && keyAccess.keyShareProtocolVersion === 2 ? (
         <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
           <label>
             Account-Passwort
@@ -151,6 +155,17 @@ export function WorkspaceSyncControls({
               type="password"
               value={identityPassword}
             />
+          </label>
+          <label>
+            Verifizierungscode des Workspace-Besitzers
+            <textarea
+              disabled={isSubmittingKey}
+              onChange={(event) => setSenderVerificationCode(event.target.value)}
+              placeholder="cipherspace-verify:…"
+              rows={3}
+              value={senderVerificationCode}
+            />
+            <small>Übernimm diesen Code über einen anderen, vertrauenswürdigen Kanal – nicht aus CipherSpace selbst.</small>
           </label>
           <label>
             Neues lokales Entsperrpasswort
@@ -186,6 +201,11 @@ export function WorkspaceSyncControls({
             diesen Workspace ein eigenes Passwort; keines davon wird mit dem Besitzer geteilt.
           </small>
         </form>
+      ) : keyStatus === "missing" && keyAccess?.keyShareAvailable ? (
+        <div className="warning-callout" role="status">
+          Diese ältere, unsignierte Schlüsselfreigabe wird nicht entschlüsselt. Bitte einen bereits
+          verifizierten Workspace-Besitzer, sie als signierte Version 2 neu auszustellen.
+        </div>
       ) : keyStatus === "missing" && legacyMigrationRequired ? (
         <div className="warning-callout" role="status">
           Der ursprüngliche Workspace-Schlüssel fehlt auf diesem Gerät. Ein Ersatzschlüssel könnte
@@ -199,6 +219,21 @@ export function WorkspaceSyncControls({
         </div>
       ) : keyStatus === "missing" || keyStatus === "locked" ? (
         <form className="sync-key-form" onSubmit={(event) => void handleKeySubmit(event)}>
+          {keyStatus === "missing" && keyAccess?.canInitialize ? (
+            <label>
+              Account-Passwort für die digitale Signatur
+              <input
+                autoComplete="current-password"
+                disabled={isSubmittingKey}
+                maxLength={128}
+                minLength={12}
+                onChange={(event) => setIdentityPassword(event.target.value)}
+                required
+                type="password"
+                value={identityPassword}
+              />
+            </label>
+          ) : null}
           <label>
             Lokales Entsperrpasswort
             <input

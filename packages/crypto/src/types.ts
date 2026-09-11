@@ -4,6 +4,11 @@ import {
   NOTE_ENVELOPE_VERSION,
   USER_IDENTITY_ALGORITHM,
   USER_IDENTITY_KEY_VERSION,
+  USER_SIGNING_ALGORITHM,
+  USER_SIGNING_KEY_VERSION,
+  IDENTITY_BUNDLE_VERSION,
+  WORKSPACE_KEY_SHARE_PROTOCOL_VERSION,
+  LEGACY_RECOVERY_KIT_VERSION,
   RECOVERY_KIT_VERSION,
   WORKSPACE_KEY_VERSION
 } from "./constants.js";
@@ -96,11 +101,51 @@ export interface ProtectedUserPrivateKey {
   version: 1;
 }
 
-export interface LocalUserCryptoIdentity extends PublicUserCryptoIdentity {
-  protectedPrivateKey: ProtectedUserPrivateKey;
+export interface ProtectedSigningPrivateKey {
+  algorithm: "AES-GCM";
+  ciphertext: string;
+  identityAlgorithm: typeof USER_SIGNING_ALGORITHM;
+  identityKeyVersion: typeof USER_SIGNING_KEY_VERSION;
+  iterations: 600000;
+  kdf: "PBKDF2";
+  kdfHash: "SHA-256";
+  nonce: string;
+  salt: string;
+  version: 1;
 }
 
-export interface EncryptedUserRecoveryKit {
+export interface PublicUserSigningIdentity {
+  algorithm: typeof USER_SIGNING_ALGORITHM;
+  keyVersion: typeof USER_SIGNING_KEY_VERSION;
+  publicKey: string;
+}
+
+export interface LocalUserSigningIdentity extends PublicUserSigningIdentity {
+  protectedPrivateKey: ProtectedSigningPrivateKey;
+}
+
+export interface PublicIdentityBundle {
+  bundleHash: string;
+  bundleSequence: number;
+  bundleVersion: typeof IDENTITY_BUNDLE_VERSION;
+  createdAt: string;
+  encryptionKey: PublicUserCryptoIdentity & { fingerprint: string };
+  previousBundleHash: string | null;
+  signature: {
+    algorithm: typeof USER_SIGNING_ALGORITHM;
+    value: string;
+  };
+  signingKey: PublicUserSigningIdentity & { fingerprint: string };
+  userId: string;
+}
+
+export interface LocalUserCryptoIdentity extends PublicUserCryptoIdentity {
+  identityBundle?: PublicIdentityBundle;
+  protectedPrivateKey: ProtectedUserPrivateKey;
+  signingIdentity?: LocalUserSigningIdentity;
+}
+
+export interface LegacyEncryptedUserRecoveryKit {
   created_at: string;
   encrypted_private_key: {
     algorithm: "AES-GCM";
@@ -118,9 +163,28 @@ export interface EncryptedUserRecoveryKit {
     key_version: typeof USER_IDENTITY_KEY_VERSION;
     public_key: string;
   };
+  recovery_kit_version: typeof LEGACY_RECOVERY_KIT_VERSION;
+  user_id: string;
+}
+
+export interface EncryptedUserRecoveryKitV2 {
+  created_at: string;
+  encrypted_private_keys: {
+    algorithm: "AES-GCM";
+    ciphertext: string;
+    format: "CIPHERSPACE-IDENTITY-KEYS-V2";
+    iterations: 600000;
+    kdf: "PBKDF2";
+    kdf_hash: "SHA-256";
+    nonce: string;
+    salt: string;
+  };
+  identity_bundle: PublicIdentityBundle;
   recovery_kit_version: typeof RECOVERY_KIT_VERSION;
   user_id: string;
 }
+
+export type EncryptedUserRecoveryKit = LegacyEncryptedUserRecoveryKit | EncryptedUserRecoveryKitV2;
 
 export interface UserRecoveryKitContext {
   userId: string;
@@ -141,6 +205,44 @@ export interface EncryptedWorkspaceKeyShare {
   algorithm: typeof USER_IDENTITY_ALGORITHM;
   ciphertext: string;
   recipientKeyVersion: number;
+}
+
+export interface SignedWorkspaceKeyShare {
+  operationId: string;
+  protocolVersion: typeof WORKSPACE_KEY_SHARE_PROTOCOL_VERSION;
+  recipient: {
+    bundleSequence: number;
+    encryptionKeyFingerprint: string;
+    encryptionKeyVersion: number;
+    signingKeyFingerprint: string;
+    userId: string;
+  };
+  role: "owner" | "editor" | "viewer";
+  sender: {
+    bundleSequence: number;
+    signingKeyFingerprint: string;
+    signingKeyVersion: number;
+    userId: string;
+  };
+  signature: {
+    algorithm: typeof USER_SIGNING_ALGORITHM;
+    value: string;
+  };
+  workspaceId: string;
+  workspaceKey: {
+    commitment: string;
+    version: number;
+  };
+  wrapping: {
+    algorithm: typeof USER_IDENTITY_ALGORITHM;
+    ciphertext: string;
+    labelVersion: 2;
+  };
+}
+
+declare const verifiedIdentityBrand: unique symbol;
+export interface VerifiedIdentityBundle extends PublicIdentityBundle {
+  readonly [verifiedIdentityBrand]: true;
 }
 
 /** A password-protected workspace key safe to persist as ciphertext. */

@@ -43,14 +43,7 @@ describe("browser identity recovery", () => {
     );
     await localDatabase.user_crypto_identities.clear();
     vi.spyOn(api.cryptoIdentity, "get").mockResolvedValue({
-      identity: {
-        algorithm: original.algorithm,
-        createdAt: user.createdAt,
-        keyVersion: original.keyVersion,
-        publicKey: original.publicKey,
-        updatedAt: user.createdAt,
-        userId: user.id
-      }
+      identity: original.identityBundle!
     });
 
     await importLocalUserRecoveryKit({
@@ -77,16 +70,10 @@ describe("browser identity recovery", () => {
       originalPassword,
       recoveryPassphrase
     );
+    const conflicting = await createUserCryptoIdentity("different account password", { userId: user.id });
     await localDatabase.user_crypto_identities.clear();
     vi.spyOn(api.cryptoIdentity, "get").mockResolvedValue({
-      identity: {
-        algorithm: original.algorithm,
-        createdAt: user.createdAt,
-        keyVersion: original.keyVersion,
-        publicKey: "different-public-key",
-        updatedAt: user.createdAt,
-        userId: user.id
-      }
+      identity: conflicting.identityBundle!
     });
 
     await expect(

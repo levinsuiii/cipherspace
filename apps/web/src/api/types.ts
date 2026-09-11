@@ -23,32 +23,20 @@ export interface WorkspaceMember {
 }
 
 export const userIdentityAlgorithm = "RSA-OAEP-3072-SHA256" as const;
-
-export interface UserCryptoIdentity {
-  algorithm: typeof userIdentityAlgorithm;
-  createdAt: string;
-  keyVersion: number;
-  publicKey: string;
-  updatedAt: string;
-  userId: string;
-}
+export type UserCryptoIdentity = PublicIdentityBundle;
 
 export interface InviteePublicKey {
   email: string;
-  identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">;
+  identityBundle: UserCryptoIdentity;
   userId: string;
 }
 
-export interface EncryptedWorkspaceKeyInput {
-  algorithm: typeof userIdentityAlgorithm;
-  encryptedWorkspaceKey: string;
-  recipientKeyVersion: number;
-}
+export type EncryptedWorkspaceKeyInput = SignedWorkspaceKeyShare;
 
-export interface WorkspaceKeyShare extends EncryptedWorkspaceKeyInput {
+export interface WorkspaceKeyShare {
   createdAt: string;
-  senderKeyVersion: number;
-  senderUserId: string;
+  senderIdentityBundle: PublicIdentityBundle;
+  signedShare: SignedWorkspaceKeyShare;
   userId: string;
   workspaceId: string;
 }
@@ -56,6 +44,7 @@ export interface WorkspaceKeyShare extends EncryptedWorkspaceKeyInput {
 export interface WorkspaceKeyAccess {
   canInitialize: boolean;
   keyShareAvailable: boolean;
+  keyShareProtocolVersion: number | null;
 }
 
 export interface EncryptionMetadata {
@@ -190,3 +179,4 @@ export interface SyncPullResponse {
   nextCursor: string;
   workspaceId: string;
 }
+import type { PublicIdentityBundle, SignedWorkspaceKeyShare } from "@cipherspace/crypto";

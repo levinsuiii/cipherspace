@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { createRequireAuthentication } from "../auth/middleware.js";
 import type { AuthService } from "../auth/service.js";
-import { userIdentityAlgorithm } from "../identities/repository.js";
+import { userIdentityAlgorithm, userSigningAlgorithm } from "../identities/repository.js";
 import {
   IdentityNotFoundError,
   IdentityVersionConflictError,
@@ -12,13 +12,34 @@ import {
 } from "../identities/service.js";
 
 const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const hexSha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const identitySchema = z
   .object({
-    algorithm: z.literal(userIdentityAlgorithm),
-    keyVersion: z.number().int().min(1).max(32_767),
-    publicKey: z.string().min(1).max(2_048).regex(canonicalBase64)
+    bundleHash: hexSha256,
+    bundleSequence: z.number().int().min(1).max(32_767),
+    bundleVersion: z.literal(1),
+    createdAt: z.string().datetime({ offset: false }),
+    encryptionKey: z.object({
+      algorithm: z.literal(userIdentityAlgorithm),
+      fingerprint: hexSha256,
+      keyVersion: z.number().int().min(1).max(32_767),
+      publicKey: z.string().min(1).max(2_048).regex(canonicalBase64)
+    }).strict(),
+    previousBundleHash: hexSha256.nullable(),
+    signature: z.object({
+      algorithm: z.literal(userSigningAlgorithm),
+      value: z.string().min(1).max(256).regex(canonicalBase64)
+    }).strict(),
+    signingKey: z.object({
+      algorithm: z.literal(userSigningAlgorithm),
+      fingerprint: hexSha256,
+      keyVersion: z.literal(1),
+      publicKey: z.string().min(1).max(512).regex(canonicalBase64)
+    }).strict(),
+    userId: z.string().uuid()
   })
-  .strict();
+  .strict()
+  .refine((bundle) => (bundle.bundleSequence === 1) === (bundle.previousBundleHash === null));
 
 function identityFailure(reply: FastifyReply, error: unknown) {
   if (error instanceof IdentityNotFoundError) {
@@ -71,10 +92,12 @@ export function registerIdentityRoutes(
         });
       }
       try {
-        const result = await options.identityService.register({
-          ...body.data,
-          userId: request.authenticatedUser!.id
-        });
+        if (body.data.userId !== request.authenticatedUser!.id) {
+          return reply.code(400).send({
+            error: { code: "validation_failed", message: "The identity bundle user is invalid." }
+          });
+        }
+        const result = await options.identityService.register(body.data);
         return reply.code(result.created ? 201 : 200).send({ identity: result.identity });
       } catch (error) {
         return identityFailure(reply, error);

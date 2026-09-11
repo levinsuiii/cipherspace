@@ -8,7 +8,7 @@ afterEach(cleanup);
 function props() {
   return {
     conflictCount: 0,
-    keyAccess: { canInitialize: true, keyShareAvailable: false },
+    keyAccess: { canInitialize: true, keyShareAvailable: false, keyShareProtocolVersion: null },
     keyStatus: "unlocked" as const,
     onCreateKey: vi.fn(async () => undefined),
     onLock: vi.fn(),
@@ -37,6 +37,9 @@ describe("WorkspaceSyncControls", () => {
 
     expect(screen.queryByRole("button", { name: "Synchronisieren" })).not.toBeInTheDocument();
     const fields = screen.getAllByLabelText(/Entsperrpasswort/i);
+    fireEvent.change(screen.getByLabelText(/Account-Passwort für die digitale Signatur/i), {
+      target: { value: "creator account password" }
+    });
     fireEvent.change(fields[0]!, { target: { value: "correct horse battery" } });
     fireEvent.change(fields[1]!, { target: { value: "different password" } });
     fireEvent.click(screen.getByRole("button", { name: "Schlüssel erstellen und entsperren" }));
@@ -46,20 +49,26 @@ describe("WorkspaceSyncControls", () => {
     fireEvent.change(fields[1]!, { target: { value: "correct horse battery" } });
     fireEvent.click(screen.getByRole("button", { name: "Schlüssel erstellen und entsperren" }));
     await waitFor(() =>
-      expect(controls.onCreateKey).toHaveBeenCalledWith("correct horse battery")
+      expect(controls.onCreateKey).toHaveBeenCalledWith(
+        "creator account password",
+        "correct horse battery"
+      )
     );
   });
 
   it("sets up a recipient key share with separate identity and workspace passwords", async () => {
     const controls = {
       ...props(),
-      keyAccess: { canInitialize: false, keyShareAvailable: true },
+      keyAccess: { canInitialize: false, keyShareAvailable: true, keyShareProtocolVersion: 2 },
       keyStatus: "missing" as const
     };
     render(<WorkspaceSyncControls {...controls} />);
 
     fireEvent.change(screen.getByLabelText("Account-Passwort"), {
       target: { value: "recipient account password" }
+    });
+    fireEvent.change(screen.getByLabelText(/Verifizierungscode des Workspace-Besitzers/i), {
+      target: { value: "cipherspace-verify:trusted-owner-code" }
     });
     const workspacePasswords = screen.getAllByLabelText(/Entsperrpasswort/i);
     fireEvent.change(workspacePasswords[0]!, { target: { value: "recipient workspace password" } });
@@ -69,7 +78,8 @@ describe("WorkspaceSyncControls", () => {
     await waitFor(() =>
       expect(controls.onSetupShared).toHaveBeenCalledWith(
         "recipient account password",
-        "recipient workspace password"
+        "recipient workspace password",
+        "cipherspace-verify:trusted-owner-code"
       )
     );
     expect(controls.onCreateKey).not.toHaveBeenCalled();
@@ -85,6 +95,18 @@ describe("WorkspaceSyncControls", () => {
       screen.queryByRole("button", { name: "Schlüssel erstellen und entsperren" })
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Synchronisieren" })).not.toBeInTheDocument();
+  });
+
+  it("refuses to present an unsigned legacy share as usable setup material", () => {
+    const controls = {
+      ...props(),
+      keyAccess: { canInitialize: false, keyShareAvailable: true, keyShareProtocolVersion: 1 },
+      keyStatus: "missing" as const
+    };
+    render(<WorkspaceSyncControls {...controls} />);
+
+    expect(screen.getByText(/ältere, unsignierte Schlüsselfreigabe/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verschlüsselten Zugriff einrichten" })).not.toBeInTheDocument();
   });
 
   it("labels fetch failures as server unavailable without mislabeling API errors", async () => {

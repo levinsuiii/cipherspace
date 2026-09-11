@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createUserCryptoIdentity } from "@cipherspace/crypto";
+
 import { api, ApiError } from "../api/client";
 import type { User } from "../api/types";
 import { localDatabase } from "../local-storage/database";
@@ -39,24 +41,18 @@ describe("local user encryption identity", () => {
     await ensureLocalUserCryptoIdentity(user, "recipient account password");
 
     expect(register).toHaveBeenCalledOnce();
-    expect(register.mock.calls[0]?.[0]).toEqual({
-      algorithm: "RSA-OAEP-3072-SHA256",
-      keyVersion: 1,
-      publicKey: expect.any(String)
+    expect(register.mock.calls[0]?.[0]).toMatchObject({
+      bundleVersion: 1,
+      encryptionKey: { algorithm: "RSA-OAEP-3072-SHA256", keyVersion: 1, publicKey: expect.any(String) },
+      signingKey: { algorithm: "ECDSA-P256-SHA256", keyVersion: 1, publicKey: expect.any(String) },
+      userId: user.id
     });
     expect(register.mock.calls[0]?.[0]).not.toHaveProperty("protectedPrivateKey");
     const stored = await new LocalUserIdentityRepository(localDatabase, user.id).get();
     expect(stored?.protectedPrivateKey.ciphertext).toEqual(expect.any(String));
     expect(stored).not.toHaveProperty("privateKey");
     vi.mocked(api.cryptoIdentity.get).mockResolvedValue({
-      identity: {
-        algorithm: stored!.algorithm,
-        createdAt: stored!.created_at,
-        keyVersion: stored!.keyVersion,
-        publicKey: stored!.publicKey,
-        updatedAt: stored!.updated_at,
-        userId: user.id
-      }
+      identity: stored!.identityBundle!
     });
     await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("ready");
   }, 30_000);
@@ -67,30 +63,14 @@ describe("local user encryption identity", () => {
     );
     await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("missing-unregistered");
 
-    vi.mocked(api.cryptoIdentity.get).mockResolvedValueOnce({
-      identity: {
-        algorithm: "RSA-OAEP-3072-SHA256",
-        createdAt: user.createdAt,
-        keyVersion: 1,
-        publicKey: "registered-public-key",
-        updatedAt: user.createdAt,
-        userId: user.id
-      }
-    });
+    const registered = await createUserCryptoIdentity("registered account password", { userId: user.id });
+    vi.mocked(api.cryptoIdentity.get).mockResolvedValueOnce({ identity: registered.identityBundle! });
     await expect(inspectUserCryptoIdentity(user.id)).resolves.toBe("missing-registered");
-  });
+  }, 30_000);
 
   it("does not replace a registered identity when its private key is missing locally", async () => {
-    vi.spyOn(api.cryptoIdentity, "get").mockResolvedValue({
-      identity: {
-        algorithm: "RSA-OAEP-3072-SHA256",
-        createdAt: user.createdAt,
-        keyVersion: 1,
-        publicKey: "registered-public-key",
-        updatedAt: user.createdAt,
-        userId: user.id
-      }
-    });
+    const registered = await createUserCryptoIdentity("registered account password", { userId: user.id });
+    vi.spyOn(api.cryptoIdentity, "get").mockResolvedValue({ identity: registered.identityBundle! });
     const register = vi.spyOn(api.cryptoIdentity, "register");
 
     await expect(
@@ -98,5 +78,5 @@ describe("local user encryption identity", () => {
     ).rejects.toThrow("private key is not available");
     expect(register).not.toHaveBeenCalled();
     await expect(new LocalUserIdentityRepository(localDatabase, user.id).get()).resolves.toBeUndefined();
-  });
+  }, 30_000);
 });

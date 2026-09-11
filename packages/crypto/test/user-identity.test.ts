@@ -1,7 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
+import * as publicCryptoApi from "../src/index.js";
+
 import {
   createUserCryptoIdentity,
+  createSignedWorkspaceKeyShare,
   decryptCommentContent,
   decryptNoteContent,
   encryptCommentContent,
@@ -9,8 +12,10 @@ import {
   exportWorkspaceKey,
   generateWorkspaceKey,
   unlockUserCryptoIdentity,
-  unwrapWorkspaceKeyShare,
-  wrapWorkspaceKeyForRecipient,
+  unlockUserSigningIdentity,
+  upgradeUserCryptoIdentity,
+  unwrapVerifiedWorkspaceKeyShare,
+  verifyOwnIdentityBundle,
   type LocalUserCryptoIdentity
 } from "../src/index.js";
 
@@ -33,15 +38,46 @@ const workspaceId = "10000000-0000-4000-8000-000000000001";
 const identityPassword = "recipient account password";
 let recipient: LocalUserCryptoIdentity;
 let wrongRecipient: LocalUserCryptoIdentity;
+let owner: LocalUserCryptoIdentity;
+const ownerId = "00000000-0000-4000-8000-000000000004";
+const ownerPassword = "owner account password";
 
 beforeAll(async () => {
-  [recipient, wrongRecipient] = await Promise.all([
+  [recipient, wrongRecipient, owner] = await Promise.all([
     createUserCryptoIdentity(identityPassword, { userId: recipientId }),
-    createUserCryptoIdentity("different account password", { userId: wrongRecipientId })
+    createUserCryptoIdentity("different account password", { userId: wrongRecipientId }),
+    createUserCryptoIdentity(ownerPassword, { userId: ownerId })
   ]);
 }, 30_000);
 
 describe("user identity workspace-key sharing", () => {
+  it("does not expose unauthenticated recipient-wrapping helpers from the public package", () => {
+    expect(publicCryptoApi).not.toHaveProperty("wrapWorkspaceKeyForRecipient");
+    expect(publicCryptoApi).not.toHaveProperty("unwrapWorkspaceKeyShare");
+  });
+
+  it("upgrades restored legacy RSA material as a chained, newly unverified signing identity", async () => {
+    const legacyIdentity: LocalUserCryptoIdentity = {
+      algorithm: recipient.algorithm,
+      keyVersion: recipient.keyVersion,
+      protectedPrivateKey: recipient.protectedPrivateKey,
+      publicKey: recipient.publicKey
+    };
+    const upgraded = await upgradeUserCryptoIdentity(
+      legacyIdentity,
+      identityPassword,
+      { userId: recipientId },
+      recipient.identityBundle
+    );
+
+    expect(upgraded.identityBundle).toMatchObject({
+      bundleSequence: 2,
+      previousBundleHash: recipient.identityBundle!.bundleHash,
+      encryptionKey: { fingerprint: recipient.identityBundle!.encryptionKey.fingerprint }
+    });
+    expect(upgraded.identityBundle!.signingKey.fingerprint).not.toBe(recipient.identityBundle!.signingKey.fingerprint);
+  });
+
   it("generates a versioned public identity and password-protects the private key", async () => {
     expect(recipient.algorithm).toBe("RSA-OAEP-3072-SHA256");
     expect(recipient.keyVersion).toBe(1);
@@ -62,16 +98,25 @@ describe("user identity workspace-key sharing", () => {
     ).resolves.toMatchObject({ type: "private" });
   });
 
-  it("wraps the existing workspace key for one recipient and rejects the wrong private key", async () => {
+  it("signs a context-bound share and rejects the wrong private key", async () => {
     const workspaceKey = await generateWorkspaceKey();
     const plaintextExport = await exportWorkspaceKey(workspaceKey);
-    const share = await wrapWorkspaceKeyForRecipient(workspaceKey, recipient, {
-      recipientKeyVersion: recipient.keyVersion,
-      recipientUserId: recipientId,
-      workspaceId
+    const verifiedRecipient = await verifyOwnIdentityBundle(recipient.identityBundle!, {
+      encryptionPublicKey: recipient.publicKey,
+      signingPublicKey: recipient.signingIdentity!.publicKey,
+      userId: recipientId
     });
-    expect(share.ciphertext).not.toBe(plaintextExport);
-    expect(Buffer.from(share.ciphertext, "base64")).toHaveLength(384);
+    const signingKey = await unlockUserSigningIdentity(owner.signingIdentity!, ownerPassword, { userId: ownerId });
+    const share = await createSignedWorkspaceKeyShare({
+      recipient: verifiedRecipient,
+      role: "editor",
+      senderBundle: owner.identityBundle!,
+      senderSigningPrivateKey: signingKey,
+      workspaceId,
+      workspaceKey
+    });
+    expect(share.wrapping.ciphertext).not.toBe(plaintextExport);
+    expect(Buffer.from(share.wrapping.ciphertext, "base64")).toHaveLength(384);
 
     const wrongPrivateKey = await unlockUserCryptoIdentity(
       wrongRecipient,
@@ -79,9 +124,11 @@ describe("user identity workspace-key sharing", () => {
       { userId: wrongRecipientId }
     );
     await expect(
-      unwrapWorkspaceKeyShare(share, wrongPrivateKey, {
-        recipientKeyVersion: share.recipientKeyVersion,
-        recipientUserId: recipientId,
+      unwrapVerifiedWorkspaceKeyShare({
+        recipientBundle: recipient.identityBundle!,
+        recipientPrivateKey: wrongPrivateKey,
+        senderSigningIdentity: owner.identityBundle!.signingKey,
+        share,
         workspaceId
       })
     ).rejects.toMatchObject({ code: "workspace_key_share_unlock_failed" });
@@ -89,12 +136,24 @@ describe("user identity workspace-key sharing", () => {
     const recipientPrivateKey = await unlockUserCryptoIdentity(recipient, identityPassword, {
       userId: recipientId
     });
-    const unwrapped = await unwrapWorkspaceKeyShare(share, recipientPrivateKey, {
-      recipientKeyVersion: share.recipientKeyVersion,
-      recipientUserId: recipientId,
+    const unwrapped = await unwrapVerifiedWorkspaceKeyShare({
+      recipientBundle: recipient.identityBundle!,
+      recipientPrivateKey,
+      senderSigningIdentity: owner.identityBundle!.signingKey,
+      share,
       workspaceId
     });
     expect(await exportWorkspaceKey(unwrapped)).toBe(plaintextExport);
+
+    const tampered = structuredClone(share);
+    tampered.role = "viewer";
+    await expect(unwrapVerifiedWorkspaceKeyShare({
+      recipientBundle: recipient.identityBundle!,
+      recipientPrivateKey,
+      senderSigningIdentity: owner.identityBundle!.signingKey,
+      share: tampered,
+      workspaceId
+    })).rejects.toMatchObject({ code: "workspace_key_share_unlock_failed" });
   });
 
   it("lets the recipient decrypt existing encrypted notes and comments with the shared key", async () => {
@@ -105,17 +164,27 @@ describe("user identity workspace-key sharing", () => {
       ownerKey,
       sharedCommentContext
     );
-    const share = await wrapWorkspaceKeyForRecipient(ownerKey, recipient, {
-      recipientKeyVersion: recipient.keyVersion,
-      recipientUserId: recipientId,
-      workspaceId
+    const verifiedRecipient = await verifyOwnIdentityBundle(recipient.identityBundle!, {
+      encryptionPublicKey: recipient.publicKey,
+      signingPublicKey: recipient.signingIdentity!.publicKey,
+      userId: recipientId
+    });
+    const share = await createSignedWorkspaceKeyShare({
+      recipient: verifiedRecipient,
+      role: "viewer",
+      senderBundle: owner.identityBundle!,
+      senderSigningPrivateKey: await unlockUserSigningIdentity(owner.signingIdentity!, ownerPassword, { userId: ownerId }),
+      workspaceId,
+      workspaceKey: ownerKey
     });
     const privateKey = await unlockUserCryptoIdentity(recipient, identityPassword, {
       userId: recipientId
     });
-    const recipientKey = await unwrapWorkspaceKeyShare(share, privateKey, {
-      recipientKeyVersion: share.recipientKeyVersion,
-      recipientUserId: recipientId,
+    const recipientKey = await unwrapVerifiedWorkspaceKeyShare({
+      recipientBundle: recipient.identityBundle!,
+      recipientPrivateKey: privateKey,
+      senderSigningIdentity: owner.identityBundle!.signingKey,
+      share,
       workspaceId
     });
     await expect(decryptNoteContent(note, recipientKey, sharedNoteContext)).resolves.toBe("Existing owner note");

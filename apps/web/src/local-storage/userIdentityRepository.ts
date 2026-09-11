@@ -53,4 +53,18 @@ export class LocalUserIdentityRepository {
       return stored;
     });
   }
+
+  public async upgrade(identity: LocalUserCryptoIdentity): Promise<LocalStoredUserCryptoIdentity> {
+    const existing = await this.get();
+    if (!existing) throw new Error("No local identity is available to upgrade.");
+    const stored: LocalStoredUserCryptoIdentity = {
+      ...identity,
+      created_at: existing.created_at,
+      key: this.userId,
+      updated_at: this.now(),
+      user_id: this.userId
+    };
+    await this.database.user_crypto_identities.put(stored);
+    return stored;
+  }
 }

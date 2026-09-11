@@ -1,5 +1,3 @@
-import { generateKeyPairSync } from "node:crypto";
-
 import type { QueryResult } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,11 +12,11 @@ import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import type { Database } from "../src/database/database.js";
 import {
-  userIdentityAlgorithm,
   type IdentityRepository,
   type RegisterIdentityResult,
   type StoredUserCryptoIdentity
 } from "../src/identities/repository.js";
+import { createIdentityFixture } from "./crypto-fixtures.js";
 
 const config: AppConfig = {
   AUTH_RATE_LIMIT_MAX: 10,
@@ -66,22 +64,22 @@ class TestIdentityRepository implements IdentityRepository {
     return this.stored?.userId === userId ? this.stored : null;
   }
 
-  public async register(input: {
-    algorithm: typeof userIdentityAlgorithm;
-    keyVersion: number;
-    publicKey: string;
-    userId: string;
-  }): Promise<RegisterIdentityResult> {
+  public async findBySequence(userId: string, bundleSequence: number) {
+    return this.stored?.userId === userId && this.stored.bundleSequence === bundleSequence ? this.stored : null;
+  }
+
+  public async register(input: StoredUserCryptoIdentity): Promise<RegisterIdentityResult> {
     if (this.stored) {
-      return this.stored.publicKey === input.publicKey && this.stored.keyVersion === input.keyVersion
-        ? { identity: this.stored, status: "unchanged" }
-        : { status: "version_conflict" };
+      if (this.stored.bundleHash === input.bundleHash && this.stored.bundleSequence === input.bundleSequence) {
+        return { identity: this.stored, status: "unchanged" };
+      }
+      if (
+        input.bundleSequence !== this.stored.bundleSequence + 1 ||
+        input.previousBundleHash !== this.stored.bundleHash ||
+        input.encryptionKey.fingerprint !== this.stored.encryptionKey.fingerprint
+      ) return { status: "version_conflict" };
     }
-    this.stored = {
-      ...input,
-      createdAt: user.createdAt,
-      updatedAt: user.createdAt
-    };
+    this.stored = input;
     return { identity: this.stored, status: "created" };
   }
 }
@@ -124,23 +122,18 @@ describe("user crypto identity routes", () => {
   });
 
   it("registers and returns only a validated public identity key", async () => {
-    const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 3072 });
-    const encodedPublicKey = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    const { bundle } = createIdentityFixture(user.id);
     const response = await app.inject({
       headers: { cookie },
       method: "PUT",
-      payload: {
-        algorithm: userIdentityAlgorithm,
-        keyVersion: 1,
-        publicKey: encodedPublicKey
-      },
+      payload: bundle,
       url: "/api/crypto/identity"
     });
     expect(response.statusCode).toBe(201);
     expect(response.json().identity).toMatchObject({
-      algorithm: userIdentityAlgorithm,
-      keyVersion: 1,
-      publicKey: encodedPublicKey,
+      bundleHash: bundle.bundleHash,
+      encryptionKey: bundle.encryptionKey,
+      signingKey: bundle.signingKey,
       userId: user.id
     });
     expect(identities.stored).not.toHaveProperty("privateKey");
@@ -155,7 +148,7 @@ describe("user crypto identity routes", () => {
       headers: { cookie },
       method: "PUT",
       payload: {
-        algorithm: userIdentityAlgorithm,
+        algorithm: "RSA-OAEP-3072-SHA256",
         keyVersion: 1,
         privateKey: "must-never-be-accepted",
         publicKey: "AAAA"
@@ -164,5 +157,20 @@ describe("user crypto identity routes", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(identities.stored).toBeNull();
+  });
+
+  it("accepts a chained signing-root refresh that preserves the encryption identity", async () => {
+    const first = createIdentityFixture(user.id).bundle;
+    const second = createIdentityFixture(user.id, first).bundle;
+    const firstResponse = await app.inject({ headers: { cookie }, method: "PUT", payload: first, url: "/api/crypto/identity" });
+    const secondResponse = await app.inject({ headers: { cookie }, method: "PUT", payload: second, url: "/api/crypto/identity" });
+
+    expect(firstResponse.statusCode).toBe(201);
+    expect(secondResponse.statusCode).toBe(201);
+    expect(secondResponse.json().identity).toMatchObject({
+      bundleSequence: 2,
+      previousBundleHash: first.bundleHash,
+      encryptionKey: { fingerprint: first.encryptionKey.fingerprint }
+    });
   });
 });

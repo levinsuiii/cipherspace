@@ -1,8 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import {
+  createSignedWorkspaceKeyShare,
+  createPersonalVerificationCode,
   unlockUserCryptoIdentity,
-  unwrapWorkspaceKeyShare,
-  wrapWorkspaceKeyForRecipient
+  unlockUserSigningIdentity,
+  unwrapVerifiedWorkspaceKeyShare,
+  verifyIdentityBundle,
+  verifyOwnIdentityBundle
 } from "@cipherspace/crypto";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
@@ -19,6 +23,8 @@ import { NoteSyncEngine } from "../sync/engine";
 import { useAuth } from "../auth/AuthContext";
 import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
 import { workspaceRoleLabel } from "../utils";
+import { localDatabase } from "../local-storage/database";
+import { LocalIdentityPinRepository } from "../local-storage/identityPinRepository";
 
 export interface WorkspaceOutletContext {
   workspace: Workspace;
@@ -142,44 +148,91 @@ export function WorkspaceLayout() {
     return identity;
   };
 
-  const createInitialWorkspaceKey = async (passphrase: string) => {
+  const createInitialWorkspaceKey = async (identityPassword: string, passphrase: string) => {
     const identity = await requireLocalIdentity();
+    if (!identity.identityBundle || !identity.signingIdentity) {
+      throw new Error("Aktualisiere zuerst deine signierte Verschlüsselungsidentität.");
+    }
+    const selfBundle = await verifyOwnIdentityBundle(identity.identityBundle, {
+      encryptionPublicKey: identity.publicKey,
+      signingPublicKey: identity.signingIdentity.publicKey,
+      userId: user!.id
+    });
+    const signingKey = await unlockUserSigningIdentity(
+      identity.signingIdentity,
+      identityPassword,
+      { userId: user!.id }
+    );
     await workspaceKey.create(passphrase);
     const key = await workspaceKey.getKey();
-    const share = await wrapWorkspaceKeyForRecipient(key, identity, {
-      recipientKeyVersion: identity.keyVersion,
-      recipientUserId: user!.id,
-      workspaceId
+    const share = await createSignedWorkspaceKeyShare({
+      recipient: selfBundle,
+      role: "owner",
+      senderBundle: identity.identityBundle,
+      senderSigningPrivateKey: signingKey,
+      workspaceId,
+      workspaceKey: key
     });
-    await api.workspaces.putKeyShare(workspaceId, user!.id, {
-      algorithm: share.algorithm,
-      encryptedWorkspaceKey: share.ciphertext,
-      recipientKeyVersion: share.recipientKeyVersion
-    });
+    await api.workspaces.putKeyShare(workspaceId, user!.id, share);
     await keyAccessQuery.refetch();
   };
 
-  const setupSharedWorkspace = async (identityPassword: string, passphrase: string) => {
+  const setupSharedWorkspace = async (
+    identityPassword: string,
+    passphrase: string,
+    senderVerificationCode: string
+  ) => {
     const identity = await requireLocalIdentity();
+    if (!identity.identityBundle || !identity.signingIdentity) throw new Error("Die lokale signierte Identität fehlt.");
+    const recipientBundle = await verifyOwnIdentityBundle(identity.identityBundle, {
+      encryptionPublicKey: identity.publicKey,
+      signingPublicKey: identity.signingIdentity.publicKey,
+      userId: user!.id
+    });
     const [privateKey, result] = await Promise.all([
       unlockUserCryptoIdentity(identity, identityPassword, { userId: user!.id }),
       api.workspaces.getOwnKeyShare(workspaceId)
     ]);
-    const share = result.keyShare;
-    const workspaceCryptoKey = await unwrapWorkspaceKeyShare(
-      {
-        algorithm: share.algorithm,
-        ciphertext: share.encryptedWorkspaceKey,
-        recipientKeyVersion: share.recipientKeyVersion
-      },
-      privateKey,
-      {
-        recipientKeyVersion: share.recipientKeyVersion,
-        recipientUserId: user!.id,
-        workspaceId
+    const share = result.keyShare.signedShare;
+    const workspaceRole = workspace?.role;
+    if (!workspaceRole || share.role !== workspaceRole) {
+      throw new Error("Die signierte Rolle stimmt nicht mit der Workspace-Mitgliedschaft überein.");
+    }
+    let senderSigningIdentity;
+    if (share.sender.userId === user!.id) {
+      senderSigningIdentity = recipientBundle.signingKey;
+    } else {
+      const senderBundle = result.keyShare.senderIdentityBundle;
+      await verifyIdentityBundle(senderBundle);
+      if (
+        senderBundle.userId !== share.sender.userId ||
+        senderBundle.bundleSequence !== share.sender.bundleSequence ||
+        senderBundle.signingKey.fingerprint !== share.sender.signingKeyFingerprint
+      ) {
+        throw new Error("Die Server-Identität des Absenders passt nicht zur signierten Freigabe.");
       }
-    );
-    await workspaceKey.storeShared(workspaceCryptoKey, passphrase);
+      const pinRepository = new LocalIdentityPinRepository(localDatabase, user!.id);
+      const existingPin = await pinRepository.get(senderBundle.userId);
+      if (!existingPin) {
+        if (!senderVerificationCode) {
+          throw new Error("Gib zuerst den unabhängig erhaltenen Verifizierungscode des Workspace-Besitzers ein.");
+        }
+        await pinRepository.verifyFromIndependentCode(
+          senderBundle,
+          createPersonalVerificationCode(senderBundle),
+          senderVerificationCode
+        );
+      }
+      senderSigningIdentity = (await pinRepository.requireVerified(senderBundle)).signingKey;
+    }
+    const workspaceCryptoKey = await unwrapVerifiedWorkspaceKeyShare({
+      recipientBundle,
+      recipientPrivateKey: privateKey,
+      senderSigningIdentity,
+      share,
+      workspaceId
+    });
+    await workspaceKey.storeShared(workspaceCryptoKey, passphrase, share);
   };
 
   if (!workspace && (workspaceQuery.isLoading || cachedWorkspaceQuery.isLoading)) {

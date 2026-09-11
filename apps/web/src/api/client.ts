@@ -127,7 +127,7 @@ export const api = {
   },
   cryptoIdentity: {
     get: () => request<{ identity: UserCryptoIdentity }>("/crypto/identity"),
-    register: (identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">) =>
+    register: (identity: UserCryptoIdentity) =>
       request<{ identity: UserCryptoIdentity }>("/crypto/identity", {
         body: JSON.stringify(identity),
         method: "PUT"
@@ -152,7 +152,7 @@ export const api = {
   workspaces: {
     addMember: (
       workspaceId: string,
-      input: { email: string; keyShare: EncryptedWorkspaceKeyInput; role: WorkspaceMember["role"] }
+      input: { userId: string; keyShare: EncryptedWorkspaceKeyInput; role: WorkspaceMember["role"] }
     ) =>
       request<{ member: WorkspaceMember }>(`${workspacePath(workspaceId)}/members`, {
         body: JSON.stringify(input),

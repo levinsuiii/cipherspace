@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createRequireAuthentication } from "../auth/middleware.js";
 import type { AuthService } from "../auth/service.js";
 import { workspaceRoles } from "../workspaces/repository.js";
-import { userIdentityAlgorithm } from "../identities/repository.js";
+import { userIdentityAlgorithm, userSigningAlgorithm } from "../identities/repository.js";
 import {
   LastOwnerError,
   MemberAlreadyExistsError,
@@ -14,6 +14,8 @@ import {
   SenderIdentityMissingError,
   UserNotFoundError,
   WorkspaceKeyShareNotFoundError,
+  LegacyWorkspaceKeyShareError,
+  InvalidWorkspaceKeyShareError,
   WorkspaceManagementForbiddenError,
   WorkspaceNotFoundError,
   type WorkspaceService
@@ -35,23 +37,43 @@ const memberParamsSchema = z
   .strict();
 const roleSchema = z.enum(workspaceRoles);
 const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-const encryptedKeySchema = z
+const hexSha256 = z.string().regex(/^[0-9a-f]{64}$/);
+const signedShareSchema = z
   .object({
-    algorithm: z.literal(userIdentityAlgorithm),
-    encryptedWorkspaceKey: z.string().length(512).regex(canonicalBase64),
-    recipientKeyVersion: z.number().int().min(1).max(32_767)
+    operationId: z.string().uuid(),
+    protocolVersion: z.literal(2),
+    recipient: z.object({
+      bundleSequence: z.number().int().min(1).max(32_767),
+      encryptionKeyFingerprint: hexSha256,
+      encryptionKeyVersion: z.number().int().min(1).max(32_767),
+      signingKeyFingerprint: hexSha256,
+      userId: z.string().uuid()
+    }).strict(),
+    role: roleSchema,
+    sender: z.object({
+      bundleSequence: z.number().int().min(1).max(32_767),
+      signingKeyFingerprint: hexSha256,
+      signingKeyVersion: z.number().int().min(1).max(32_767),
+      userId: z.string().uuid()
+    }).strict(),
+    signature: z.object({
+      algorithm: z.literal(userSigningAlgorithm),
+      value: z.string().min(1).max(256).regex(canonicalBase64)
+    }).strict(),
+    workspaceId: z.string().uuid(),
+    workspaceKey: z.object({ commitment: hexSha256, version: z.literal(1) }).strict(),
+    wrapping: z.object({
+      algorithm: z.literal(userIdentityAlgorithm),
+      ciphertext: z.string().length(512).regex(canonicalBase64),
+      labelVersion: z.literal(2)
+    }).strict()
   })
   .strict();
-const addMemberBodySchema = z.union([
-  z
-    .object({
-      email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()),
-      keyShare: encryptedKeySchema,
-      role: roleSchema
-    })
-    .strict(),
-  z.object({ keyShare: encryptedKeySchema, role: roleSchema, userId: z.string().uuid() }).strict()
-]);
+const addMemberBodySchema = z.object({
+  keyShare: signedShareSchema,
+  role: roleSchema,
+  userId: z.string().uuid()
+}).strict();
 const updateMemberBodySchema = z.object({ role: roleSchema }).strict();
 const inviteeQuerySchema = z.union([
   z.object({ email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()) }).strict(),
@@ -136,6 +158,19 @@ function workspaceFailure(reply: FastifyReply, error: unknown) {
         code: "workspace_key_share_not_found",
         message: "No encrypted workspace key share is available for this user."
       }
+    });
+  }
+  if (error instanceof LegacyWorkspaceKeyShareError) {
+    return reply.code(409).send({
+      error: {
+        code: "legacy_key_share_requires_reissue",
+        message: "This unsigned legacy key share must be reissued by a verified owner."
+      }
+    });
+  }
+  if (error instanceof InvalidWorkspaceKeyShareError) {
+    return reply.code(400).send({
+      error: { code: "invalid_signed_key_share", message: "The signed workspace key share is invalid." }
     });
   }
   throw error;
@@ -283,12 +318,10 @@ export function registerWorkspaceRoutes(app: FastifyInstance, options: Workspace
         return validationFailure(reply);
       }
       try {
-        const reference =
-          "email" in body.data ? { email: body.data.email } : { userId: body.data.userId };
         const member = await workspaceService.addMember(
           params.data.id,
           request.authenticatedUser!.id,
-          reference,
+          { userId: body.data.userId },
           body.data.role,
           body.data.keyShare
         );
@@ -304,7 +337,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, options: Workspace
     { preHandler: requireAuthentication },
     async (request, reply) => {
       const params = memberParamsSchema.safeParse(request.params);
-      const body = encryptedKeySchema.safeParse(request.body);
+    const body = signedShareSchema.safeParse(request.body);
       if (!params.success || !body.success) return validationFailure(reply);
       try {
         return {

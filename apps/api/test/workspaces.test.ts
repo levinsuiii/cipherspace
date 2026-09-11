@@ -26,8 +26,10 @@ import type {
   StoredWorkspaceMember,
   UpdateMemberResult,
   WorkspaceRepository,
+  WorkspaceKeyShareInput,
   WorkspaceRole
 } from "../src/workspaces/repository.js";
+import { createIdentityFixture, createShareFixture } from "./crypto-fixtures.js";
 
 const testConfig: AppConfig = {
   AUTH_RATE_LIMIT_MAX: 10,
@@ -177,14 +179,7 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
 
   public async addMember(input: {
     actorUserId: string;
-    keyShare: {
-      algorithm: typeof userIdentityAlgorithm;
-      encryptedWorkspaceKey: string;
-      id: string;
-      recipientKeyVersion: number;
-      senderKeyVersion: number;
-      senderUserId: string;
-    };
+    keyShare: WorkspaceKeyShareInput;
     role: WorkspaceRole;
     targetUserId: string;
     workspaceId: string;
@@ -204,12 +199,8 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
       userId: input.targetUserId
     });
     this.keyShares.set(key, {
-      algorithm: input.keyShare.algorithm,
       createdAt: now,
-      encryptedWorkspaceKey: input.keyShare.encryptedWorkspaceKey,
-      recipientKeyVersion: input.keyShare.recipientKeyVersion,
-      senderKeyVersion: input.keyShare.senderKeyVersion,
-      senderUserId: input.keyShare.senderUserId,
+      signedShare: input.keyShare.signedShare,
       userId: input.targetUserId,
       workspaceId: input.workspaceId
     });
@@ -218,14 +209,7 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
 
   public async putKeyShare(input: {
     actorUserId: string;
-    keyShare: {
-      algorithm: typeof userIdentityAlgorithm;
-      encryptedWorkspaceKey: string;
-      id: string;
-      recipientKeyVersion: number;
-      senderKeyVersion: number;
-      senderUserId: string;
-    };
+    keyShare: WorkspaceKeyShareInput;
     targetUserId: string;
     workspaceId: string;
   }): Promise<PutKeyShareResult> {
@@ -238,12 +222,8 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
     if (!member) return "member_not_found";
     this.memberships.set(memberKey, { ...member, keyShareStatus: "available" });
     this.keyShares.set(memberKey, {
-      algorithm: input.keyShare.algorithm,
       createdAt: now,
-      encryptedWorkspaceKey: input.keyShare.encryptedWorkspaceKey,
-      recipientKeyVersion: input.keyShare.recipientKeyVersion,
-      senderKeyVersion: input.keyShare.senderKeyVersion,
-      senderUserId: input.keyShare.senderUserId,
+      signedShare: input.keyShare.signedShare,
       userId: input.targetUserId,
       workspaceId: input.workspaceId
     });
@@ -263,7 +243,8 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
         member.role === "owner" &&
         [...this.memberships.keys()].filter((key) => key.startsWith(`${workspaceId}:`)).length === 1 &&
         ![...this.keyShares.keys()].some((key) => key.startsWith(`${workspaceId}:`)),
-      keyShareAvailable: this.keyShares.has(this.key(workspaceId, userId))
+      keyShareAvailable: this.keyShares.has(this.key(workspaceId, userId)),
+      keyShareProtocolVersion: this.keyShares.get(this.key(workspaceId, userId))?.signedShare?.protocolVersion ?? null
     };
   }
 
@@ -284,6 +265,10 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
       return "last_owner";
     }
     this.memberships.set(key, { ...target, role: input.role });
+    if (target.role !== input.role) {
+      this.keyShares.delete(key);
+      this.memberships.set(key, { ...target, keyShareStatus: "missing", role: input.role });
+    }
     return "updated";
   }
 
@@ -314,20 +299,31 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
 
 class InMemoryIdentityRepository implements IdentityRepository {
   private readonly identities = new Map<string, StoredUserCryptoIdentity>();
+  private readonly signingPrivateKeys = new Map<string, ReturnType<typeof createIdentityFixture>["signingPrivateKey"]>();
 
   public seed(userId: string): void {
-    this.identities.set(userId, {
-      algorithm: userIdentityAlgorithm,
-      createdAt: now,
-      keyVersion: 1,
-      publicKey: "unused-in-workspace-service-tests",
-      updatedAt: now,
-      userId
+    const fixture = createIdentityFixture(userId);
+    this.identities.set(userId, fixture.bundle);
+    this.signingPrivateKeys.set(userId, fixture.signingPrivateKey);
+  }
+
+  public createShare(senderUserId: string, recipientUserId: string, workspaceId: string, role: WorkspaceRole) {
+    return createShareFixture({
+      recipient: this.identities.get(recipientUserId)!,
+      role,
+      sender: this.identities.get(senderUserId)!,
+      senderSigningPrivateKey: this.signingPrivateKeys.get(senderUserId)!,
+      workspaceId
     });
   }
 
   public async findCurrent(userId: string) {
     return this.identities.get(userId) ?? null;
+  }
+
+  public async findBySequence(userId: string, bundleSequence: number) {
+    const identity = this.identities.get(userId);
+    return identity?.bundleSequence === bundleSequence ? identity : null;
   }
 
   public async register(): Promise<RegisterIdentityResult> {
@@ -387,16 +383,16 @@ async function addMember(
   payload: { email?: string; role: WorkspaceRole; userId?: string },
   cookie = cookies.owner
 ) {
+  const targetUserId = payload.userId ?? [...authRepository.users.values()].find(
+    (candidate) => candidate.email.toLowerCase() === payload.email?.toLowerCase()
+  )!.id;
   return app.inject({
     headers: { cookie },
     method: "POST",
     payload: {
-      ...payload,
-      keyShare: {
-        algorithm: userIdentityAlgorithm,
-        encryptedWorkspaceKey: Buffer.alloc(384, 7).toString("base64"),
-        recipientKeyVersion: 1
-      }
+      keyShare: identityRepository.createShare(ids.owner, targetUserId, workspaceId, payload.role),
+      role: payload.role,
+      userId: targetUserId
     },
     url: `/api/workspaces/${workspaceId}/members`
   });
@@ -482,22 +478,18 @@ describe("workspace routes", () => {
     });
     expect(inviteeKey.statusCode).toBe(200);
     expect(inviteeKey.json().invitee).toMatchObject({
-      identity: { algorithm: userIdentityAlgorithm, keyVersion: 1 },
+      identityBundle: { encryptionKey: { algorithm: userIdentityAlgorithm, keyVersion: 1 } },
       userId: ids.editor
     });
 
-    const encryptedWorkspaceKey = Buffer.alloc(384, 9).toString("base64");
+    const signedShare = identityRepository.createShare(ids.owner, ids.editor, workspace.id, "editor");
     const added = await app.inject({
       headers: { cookie: cookies.owner },
       method: "POST",
       payload: {
-        email: "editor@example.com",
-        keyShare: {
-          algorithm: userIdentityAlgorithm,
-          encryptedWorkspaceKey,
-          recipientKeyVersion: 1
-        },
-        role: "editor"
+        keyShare: signedShare,
+        role: "editor",
+        userId: ids.editor
       },
       url: `/api/workspaces/${workspace.id}/members`
     });
@@ -509,8 +501,8 @@ describe("workspace routes", () => {
       url: `/api/workspaces/${workspace.id}/key-share`
     });
     expect(recipientShare.statusCode).toBe(200);
-    expect(recipientShare.json().keyShare.encryptedWorkspaceKey).toBe(encryptedWorkspaceKey);
-    expect(recipientShare.json().keyShare.encryptedWorkspaceKey).not.toBe(
+    expect(recipientShare.json().keyShare.signedShare.wrapping.ciphertext).toBe(signedShare.wrapping.ciphertext);
+    expect(recipientShare.json().keyShare.signedShare.wrapping.ciphertext).not.toBe(
       Buffer.alloc(32, 9).toString("base64")
     );
 
@@ -526,6 +518,22 @@ describe("workspace routes", () => {
     });
     expect(outsiderShare.statusCode).toBe(404);
     expect(editorLookup.statusCode).toBe(403);
+  });
+
+  it("rejects a signed share whose bound role was changed after signing", async () => {
+    const workspace = await createWorkspace();
+    const signedShare = identityRepository.createShare(ids.owner, ids.editor, workspace.id, "editor");
+    signedShare.role = "viewer";
+
+    const response = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "POST",
+      payload: { keyShare: signedShare, role: "viewer", userId: ids.editor },
+      url: `/api/workspaces/${workspace.id}/members`
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { code: "invalid_signed_key_share" } });
   });
 
   it("denies member management to non-owners", async () => {
@@ -604,6 +612,11 @@ describe("workspace routes", () => {
       payload: { role: "viewer" },
       url: `/api/workspaces/${workspace.id}/members/${ids.outsider}`
     });
+    const staleShare = await app.inject({
+      headers: { cookie: cookies.outsider },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/key-share`
+    });
     const removal = await app.inject({
       headers: { cookie: cookies.owner },
       method: "DELETE",
@@ -611,6 +624,7 @@ describe("workspace routes", () => {
     });
     expect(downgrade.statusCode).toBe(200);
     expect(downgrade.json().member).toMatchObject({ role: "viewer", userId: ids.outsider });
+    expect(staleShare.statusCode).toBe(404);
     expect(removal.statusCode).toBe(204);
   });
 });

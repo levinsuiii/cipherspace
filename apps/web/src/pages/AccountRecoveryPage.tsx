@@ -1,4 +1,8 @@
-import { type ChangeEvent, type FormEvent, useState } from "react";
+import {
+  createPersonalVerificationCode,
+  safetyNumberForVerificationCode
+} from "@cipherspace/crypto";
+import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
 
 import { useAuth } from "../auth/AuthContext";
 import { EncryptionIdentitySetup } from "../components/EncryptionIdentitySetup";
@@ -8,6 +12,7 @@ import {
   parseRecoveryKitText
 } from "../key-management/recovery";
 import type { UserCryptoIdentityStatus } from "../key-management/userIdentity";
+import { readLocalUserCryptoIdentity } from "../key-management/userIdentity";
 
 function identityStatusLabel(status: UserCryptoIdentityStatus): string {
   switch (status) {
@@ -46,6 +51,22 @@ export function AccountRecoveryPage() {
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [verification, setVerification] = useState<{ code: string; safetyNumber: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setVerification(null);
+    if (!user) return () => { cancelled = true; };
+    void readLocalUserCryptoIdentity(user.id).then(async (identity) => {
+      if (!identity?.identityBundle) return;
+      const code = createPersonalVerificationCode(identity.identityBundle);
+      const safetyNumber = await safetyNumberForVerificationCode(code);
+      if (!cancelled) setVerification({ code, safetyNumber });
+    }).catch(() => {
+      if (!cancelled) setVerification(null);
+    });
+    return () => { cancelled = true; };
+  }, [identityRefreshToken, identityStatus, user]);
 
   if (!user) return null;
 
@@ -167,6 +188,22 @@ export function AccountRecoveryPage() {
         onStatusChange={setIdentityStatus}
         refreshToken={identityRefreshToken}
       />
+
+      {verification ? (
+        <section className="panel" aria-labelledby="identity-verification-title">
+          <p className="eyebrow">Unabhängige Identitätsprüfung</p>
+          <h2 id="identity-verification-title">Dein Verifizierungscode</h2>
+          <p>
+            Teile diesen Code oder die Sicherheitsnummer persönlich bzw. über einen bereits
+            vertrauenswürdigen Kanal. Andere Mitglieder dürfen ihn nicht aus CipherSpace selbst übernehmen.
+          </p>
+          <label>
+            Verifizierungscode
+            <textarea readOnly rows={4} value={verification.code} />
+          </label>
+          <p><strong>Sicherheitsnummer:</strong> {verification.safetyNumber}</p>
+        </section>
+      ) : null}
 
       <div className="warning-callout recovery-warning" role="note">
         <strong>Bewahre Paket und Passphrase getrennt auf.</strong> Ohne lokale private Identität

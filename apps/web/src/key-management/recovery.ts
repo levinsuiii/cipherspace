@@ -1,6 +1,8 @@
 import {
   exportUserRecoveryKit,
   importUserRecoveryKit,
+  upgradeUserCryptoIdentity,
+  verifyIdentityBundle,
   type EncryptedUserRecoveryKit
 } from "@cipherspace/crypto";
 
@@ -15,18 +17,15 @@ import {
 const MAX_RECOVERY_KIT_TEXT_LENGTH = 64 * 1024;
 
 function publicIdentityMatches(
-  local: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">,
-  remote: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">
+  local: UserCryptoIdentity,
+  remote: UserCryptoIdentity
 ): boolean {
-  return (
-    local.algorithm === remote.algorithm &&
-    local.keyVersion === remote.keyVersion &&
-    local.publicKey === remote.publicKey
-  );
+  return local.bundleHash === remote.bundleHash &&
+    local.signingKey.fingerprint === remote.signingKey.fingerprint;
 }
 
 async function verifyOrRegisterPublicIdentity(
-  identity: Pick<UserCryptoIdentity, "algorithm" | "keyVersion" | "publicKey">
+  identity: UserCryptoIdentity
 ): Promise<void> {
   try {
     const remote = (await api.cryptoIdentity.get()).identity;
@@ -82,9 +81,28 @@ export async function importLocalUserRecoveryKit(input: {
     input.accountPassword,
     { userId: input.user.id }
   );
-  await verifyOrRegisterPublicIdentity(restored.identity);
-  await repository.restore(
+  let previousBundle: UserCryptoIdentity | undefined;
+  if (!restored.identity.identityBundle || !restored.identity.signingIdentity) {
+    try {
+      previousBundle = (await api.cryptoIdentity.get()).identity;
+      await verifyIdentityBundle(previousBundle);
+      if (previousBundle.encryptionKey.publicKey !== restored.identity.publicKey) {
+        throw new Error("This recovery kit does not match the encryption identity registered for this account.");
+      }
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) throw error;
+    }
+  }
+  const upgradedIdentity = await upgradeUserCryptoIdentity(
     restored.identity,
+    input.accountPassword,
+    { userId: input.user.id },
+    previousBundle
+  );
+  if (!upgradedIdentity.identityBundle) throw new Error("Die wiederhergestellte Identität konnte nicht signiert werden.");
+  await verifyOrRegisterPublicIdentity(upgradedIdentity.identityBundle);
+  await repository.restore(
+    upgradedIdentity,
     restored.identityCreatedAt,
     input.overwriteExisting
   );

@@ -2,6 +2,7 @@ import type { WorkspaceRole } from "../api/types";
 import type {
   EncryptedNotePayload,
   LocalUserCryptoIdentity,
+  SignedWorkspaceKeyShare,
   ProtectedWorkspaceKey
 } from "@cipherspace/crypto";
 
@@ -144,4 +145,31 @@ export interface LocalStoredUserCryptoIdentity extends LocalUserCryptoIdentity {
   key: string;
   updated_at: string;
   user_id: string;
+}
+
+export interface LocalIdentityPin {
+  bundle_hash: string;
+  bundle_sequence: number;
+  encryption_key_fingerprint: string;
+  key: string;
+  signing_key_algorithm: "ECDSA-P256-SHA256";
+  signing_key_fingerprint: string;
+  signing_key_public_key: string;
+  status: "verified";
+  subject_user_id: string;
+  updated_at: string;
+  verified_contact_email?: string;
+  verification_method: "safety_number" | "verification_code";
+  verified_at: string;
+  verifier_user_id: string;
+}
+
+export interface LocalAcceptedKeyShare {
+  accepted_at: string;
+  key: string;
+  operation_id: string;
+  share: SignedWorkspaceKeyShare;
+  statement_hash: string;
+  user_id: string;
+  workspace_id: string;
 }

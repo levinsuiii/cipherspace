@@ -12,11 +12,14 @@ import type {
   EncryptedWorkspaceKeyShare,
   LocalUserCryptoIdentity,
   ProtectedUserPrivateKey,
+  PublicIdentityBundle,
   PublicUserCryptoIdentity,
   UserIdentityProtectionContext,
   WorkspaceKeyShareContext
 } from "./types.js";
 import { assertWorkspaceKey } from "./workspace-key.js";
+import { createIdentityBundle } from "./identity-bundle.js";
+import { createUserSigningIdentity, unlockUserSigningIdentity } from "./signing-identity.js";
 
 const RSA_ALGORITHM = "RSA-OAEP" as const;
 const RSA_HASH = "SHA-256" as const;
@@ -113,7 +116,7 @@ async function verifyIdentityKeyPair(
   privateKey: CryptoKey,
   identity: PublicUserCryptoIdentity
 ): Promise<void> {
-  const publicKey = await importPublicKey(identity);
+  const publicKey = await importUserEncryptionPublicKey(identity);
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   let decrypted: Uint8Array<ArrayBuffer> | undefined;
   try {
@@ -141,7 +144,7 @@ async function verifyIdentityKeyPair(
   }
 }
 
-async function importPublicKey(identity: PublicUserCryptoIdentity): Promise<CryptoKey> {
+export async function importUserEncryptionPublicKey(identity: PublicUserCryptoIdentity): Promise<CryptoKey> {
   if (
     identity.algorithm !== USER_IDENTITY_ALGORITHM ||
     identity.keyVersion !== USER_IDENTITY_KEY_VERSION
@@ -369,12 +372,21 @@ export async function createUserCryptoIdentity(
     ]);
     privateBytes = new Uint8Array(privateBuffer);
     const protectedPrivateKey = await protectUserPrivateKeyBytes(privateBytes, passphrase, context);
-    return {
+    const encryptionIdentity = {
       algorithm: USER_IDENTITY_ALGORITHM,
       keyVersion: USER_IDENTITY_KEY_VERSION,
       protectedPrivateKey,
       publicKey: encodeBase64(new Uint8Array(publicBuffer))
     };
+    const signingIdentity = await createUserSigningIdentity(passphrase, context);
+    const signingPrivateKey = await unlockUserSigningIdentity(signingIdentity, passphrase, context);
+    const identityBundle = await createIdentityBundle({
+      encryptionIdentity,
+      signingIdentity,
+      signingPrivateKey,
+      userId: context.userId
+    });
+    return { ...encryptionIdentity, identityBundle, signingIdentity };
   } catch (error) {
     if (error instanceof CipherSpaceCryptoError) throw error;
     throw new CipherSpaceCryptoError(
@@ -385,6 +397,27 @@ export async function createUserCryptoIdentity(
   } finally {
     privateBytes?.fill(0);
   }
+}
+
+export async function upgradeUserCryptoIdentity(
+  identity: LocalUserCryptoIdentity,
+  passphrase: string,
+  context: UserIdentityProtectionContext,
+  previousBundle?: PublicIdentityBundle
+): Promise<LocalUserCryptoIdentity> {
+  await unlockUserCryptoIdentity(identity, passphrase, context);
+  if (identity.identityBundle && identity.signingIdentity) return identity;
+  const signingIdentity = await createUserSigningIdentity(passphrase, context);
+  const signingPrivateKey = await unlockUserSigningIdentity(signingIdentity, passphrase, context);
+  const identityBundle = await createIdentityBundle({
+    bundleSequence: previousBundle ? previousBundle.bundleSequence + 1 : 1,
+    encryptionIdentity: identity,
+    previousBundleHash: previousBundle?.bundleHash ?? null,
+    signingIdentity,
+    signingPrivateKey,
+    userId: context.userId
+  });
+  return { ...identity, identityBundle, signingIdentity };
 }
 
 export async function unlockUserCryptoIdentity(
@@ -430,7 +463,7 @@ export async function wrapWorkspaceKeyForRecipient(
     );
   }
   try {
-    const publicKey = await importPublicKey(recipient);
+    const publicKey = await importUserEncryptionPublicKey(recipient);
     const ciphertext = await crypto.subtle.wrapKey(
       "raw",
       workspaceKey,

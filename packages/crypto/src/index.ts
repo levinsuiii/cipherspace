@@ -7,9 +7,14 @@ export {
   MAX_NOTE_CIPHERTEXT_BYTES,
   NOTE_ENCRYPTION_ALGORITHM,
   NOTE_ENVELOPE_VERSION,
+  IDENTITY_BUNDLE_VERSION,
+  LEGACY_RECOVERY_KIT_VERSION,
   RECOVERY_KIT_VERSION,
   USER_IDENTITY_ALGORITHM,
   USER_IDENTITY_KEY_VERSION,
+  USER_SIGNING_ALGORITHM,
+  USER_SIGNING_KEY_VERSION,
+  WORKSPACE_KEY_SHARE_PROTOCOL_VERSION,
   WORKSPACE_KEY_VERSION
 } from "./constants.js";
 export { CipherSpaceCryptoError } from "./errors.js";
@@ -26,14 +31,38 @@ export { exportUserRecoveryKit, importUserRecoveryKit } from "./recovery-kit.js"
 export { exportWorkspaceKey, generateWorkspaceKey, importWorkspaceKey } from "./workspace-key.js";
 export {
   createUserCryptoIdentity,
-  unlockUserCryptoIdentity,
-  unwrapWorkspaceKeyShare,
-  wrapWorkspaceKeyForRecipient
+  upgradeUserCryptoIdentity,
+  unlockUserCryptoIdentity
 } from "./user-identity.js";
+export {
+  createIdentityBundle,
+  createPersonalVerificationCode,
+  identityBundleCanonicalBytes,
+  publicKeyFingerprint,
+  safetyNumberForVerificationCode,
+  verifyIdentityBundle,
+  verifyIdentityBundleAgainstPin,
+  verifyOwnIdentityBundle
+} from "./identity-bundle.js";
+export {
+  createUserSigningIdentity,
+  decryptProtectedSigningPrivateKeyBytes,
+  unlockUserSigningIdentity
+} from "./signing-identity.js";
+export {
+  createSignedWorkspaceKeyShare,
+  unwrapVerifiedWorkspaceKeyShare,
+  verifySignedWorkspaceKeyShare,
+  workspaceKeyShareCanonicalBytes
+} from "./workspace-key-share.js";
 export type {
   EncryptedWorkspaceKeyShare,
   EncryptedUserRecoveryKit,
   LocalUserCryptoIdentity,
+  LocalUserSigningIdentity,
+  PublicIdentityBundle,
+  PublicUserSigningIdentity,
+  ProtectedSigningPrivateKey,
   ProtectedUserPrivateKey,
   ProtectedWorkspaceKey,
   PublicUserCryptoIdentity,
@@ -41,6 +70,8 @@ export type {
   UserRecoveryKitContext,
   UserRecoveryKitExportContext,
   WorkspaceKeyProtectionContext,
-  WorkspaceKeyShareContext
+  WorkspaceKeyShareContext,
+  SignedWorkspaceKeyShare,
+  VerifiedIdentityBundle
 } from "./types.js";
 export { protectWorkspaceKey, unlockWorkspaceKey } from "./workspace-key-protection.js";

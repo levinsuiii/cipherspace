@@ -1,10 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, webcrypto } from "node:crypto";
 
-import {
-  userIdentityAlgorithm,
-  type IdentityRepository,
-  type StoredUserCryptoIdentity
-} from "../identities/repository.js";
+import { type IdentityRepository } from "../identities/repository.js";
 import type {
   StoredWorkspace,
   StoredWorkspaceKeyShare,
@@ -12,7 +8,8 @@ import type {
   WorkspaceKeyAccess,
   WorkspaceKeyShareInput,
   WorkspaceRepository,
-  WorkspaceRole
+  WorkspaceRole,
+  SignedWorkspaceKeyShare
 } from "./repository.js";
 
 export interface Workspace {
@@ -33,30 +30,19 @@ export interface WorkspaceMember {
 
 export interface InviteePublicKey {
   email: string;
-  identity: {
-    algorithm: typeof userIdentityAlgorithm;
-    keyVersion: number;
-    publicKey: string;
-  };
+  identityBundle: NonNullable<Awaited<ReturnType<IdentityRepository["findCurrent"]>>>;
   userId: string;
 }
 
 export interface WorkspaceKeyShare {
-  algorithm: typeof userIdentityAlgorithm;
   createdAt: string;
-  encryptedWorkspaceKey: string;
-  recipientKeyVersion: number;
-  senderKeyVersion: number;
-  senderUserId: string;
+  senderIdentityBundle: NonNullable<Awaited<ReturnType<IdentityRepository["findCurrent"]>>>;
+  signedShare: SignedWorkspaceKeyShare;
   userId: string;
   workspaceId: string;
 }
 
-export interface EncryptedWorkspaceKeyInput {
-  algorithm: typeof userIdentityAlgorithm;
-  encryptedWorkspaceKey: string;
-  recipientKeyVersion: number;
-}
+export type EncryptedWorkspaceKeyInput = SignedWorkspaceKeyShare;
 
 export type MemberReference = { email: string } | { userId: string };
 
@@ -70,6 +56,8 @@ export class RecipientIdentityMissingError extends Error {}
 export class SenderIdentityMissingError extends Error {}
 export class RecipientKeyVersionMismatchError extends Error {}
 export class WorkspaceKeyShareNotFoundError extends Error {}
+export class LegacyWorkspaceKeyShareError extends Error {}
+export class InvalidWorkspaceKeyShareError extends Error {}
 
 function publicWorkspace(workspace: StoredWorkspace): Workspace {
   return {
@@ -91,14 +79,15 @@ function publicMember(member: StoredWorkspaceMember): WorkspaceMember {
   };
 }
 
-function publicKeyShare(share: StoredWorkspaceKeyShare): WorkspaceKeyShare {
+function publicKeyShare(
+  share: StoredWorkspaceKeyShare,
+  senderIdentityBundle: NonNullable<Awaited<ReturnType<IdentityRepository["findCurrent"]>>>
+): WorkspaceKeyShare {
+  if (!share.signedShare) throw new LegacyWorkspaceKeyShareError();
   return {
-    algorithm: share.algorithm,
     createdAt: share.createdAt.toISOString(),
-    encryptedWorkspaceKey: share.encryptedWorkspaceKey,
-    recipientKeyVersion: share.recipientKeyVersion,
-    senderKeyVersion: share.senderKeyVersion,
-    senderUserId: share.senderUserId,
+    senderIdentityBundle,
+    signedShare: share.signedShare,
     userId: share.userId,
     workspaceId: share.workspaceId
   };
@@ -138,7 +127,7 @@ export class WorkspaceService {
     actorUserId: string,
     reference: MemberReference,
     role: WorkspaceRole,
-    encryptedKey: EncryptedWorkspaceKeyInput
+    signedShare: EncryptedWorkspaceKeyInput
   ): Promise<WorkspaceMember> {
     await this.requireOwner(workspaceId, actorUserId);
 
@@ -156,13 +145,11 @@ export class WorkspaceService {
     ]);
     if (!senderIdentity) throw new SenderIdentityMissingError();
     if (!recipientIdentity) throw new RecipientIdentityMissingError();
-    if (recipientIdentity.keyVersion !== encryptedKey.recipientKeyVersion) {
-      throw new RecipientKeyVersionMismatchError();
-    }
+    await this.validateSignedShare(signedShare, workspaceId, actorUserId, user.id, role, senderIdentity, recipientIdentity);
 
     const result = await this.repository.addMember({
       actorUserId,
-      keyShare: this.keyShareInput(actorUserId, senderIdentity, encryptedKey),
+      keyShare: { signedShare },
       role,
       targetUserId: user.id,
       workspaceId
@@ -199,11 +186,7 @@ export class WorkspaceService {
     if (!identity) throw new RecipientIdentityMissingError();
     return {
       email: user.email,
-      identity: {
-        algorithm: identity.algorithm,
-        keyVersion: identity.keyVersion,
-        publicKey: identity.publicKey
-      },
+      identityBundle: identity,
       userId: user.id
     };
   }
@@ -212,7 +195,7 @@ export class WorkspaceService {
     workspaceId: string,
     actorUserId: string,
     targetUserId: string,
-    encryptedKey: EncryptedWorkspaceKeyInput
+    signedShare: EncryptedWorkspaceKeyInput
   ): Promise<WorkspaceKeyShare> {
     await this.requireOwner(workspaceId, actorUserId);
     const [senderIdentity, recipientIdentity] = await Promise.all([
@@ -221,26 +204,39 @@ export class WorkspaceService {
     ]);
     if (!senderIdentity) throw new SenderIdentityMissingError();
     if (!recipientIdentity) throw new RecipientIdentityMissingError();
-    if (recipientIdentity.keyVersion !== encryptedKey.recipientKeyVersion) {
-      throw new RecipientKeyVersionMismatchError();
-    }
+    const targetMember = await this.repository.findMember(workspaceId, targetUserId);
+    if (!targetMember) throw new MemberNotFoundError();
+    await this.validateSignedShare(
+      signedShare, workspaceId, actorUserId, targetUserId, targetMember.role,
+      senderIdentity, recipientIdentity
+    );
     const result = await this.repository.putKeyShare({
       actorUserId,
-      keyShare: this.keyShareInput(actorUserId, senderIdentity, encryptedKey),
+      keyShare: { signedShare },
       targetUserId,
       workspaceId
     });
     this.handleMutationResult(result);
     const share = await this.repository.getKeyShare(workspaceId, targetUserId);
     if (!share) throw new Error("Stored workspace key share could not be read");
-    return publicKeyShare(share);
+    return publicKeyShare(share, senderIdentity);
   }
 
   public async getOwnKeyShare(workspaceId: string, userId: string): Promise<WorkspaceKeyShare> {
     await this.requireMembership(workspaceId, userId);
     const share = await this.repository.getKeyShare(workspaceId, userId);
     if (!share) throw new WorkspaceKeyShareNotFoundError();
-    return publicKeyShare(share);
+    if (!share.signedShare) throw new LegacyWorkspaceKeyShareError();
+    const senderIdentity = await this.identityRepository.findBySequence(
+      share.signedShare.sender.userId,
+      share.signedShare.sender.bundleSequence
+    );
+    if (
+      !senderIdentity ||
+      senderIdentity.bundleSequence !== share.signedShare.sender.bundleSequence ||
+      senderIdentity.signingKey.fingerprint !== share.signedShare.sender.signingKeyFingerprint
+    ) throw new SenderIdentityMissingError();
+    return publicKeyShare(share, senderIdentity);
   }
 
   public async getKeyAccess(workspaceId: string, userId: string): Promise<WorkspaceKeyAccess> {
@@ -312,18 +308,47 @@ export class WorkspaceService {
     }
   }
 
-  private keyShareInput(
+  private async validateSignedShare(
+    share: SignedWorkspaceKeyShare,
+    workspaceId: string,
     senderUserId: string,
-    senderIdentity: StoredUserCryptoIdentity,
-    encryptedKey: EncryptedWorkspaceKeyInput
-  ): WorkspaceKeyShareInput {
-    return {
-      algorithm: encryptedKey.algorithm,
-      encryptedWorkspaceKey: encryptedKey.encryptedWorkspaceKey,
-      id: randomUUID(),
-      recipientKeyVersion: encryptedKey.recipientKeyVersion,
-      senderKeyVersion: senderIdentity.keyVersion,
-      senderUserId
-    };
+    recipientUserId: string,
+    role: WorkspaceRole,
+    senderIdentity: NonNullable<Awaited<ReturnType<IdentityRepository["findCurrent"]>>>,
+    recipientIdentity: NonNullable<Awaited<ReturnType<IdentityRepository["findCurrent"]>>>
+  ): Promise<void> {
+    if (
+      share.protocolVersion !== 2 || share.workspaceId !== workspaceId || share.sender.userId !== senderUserId ||
+      share.sender.signingKeyFingerprint !== senderIdentity.signingKey.fingerprint ||
+      share.sender.signingKeyVersion !== senderIdentity.signingKey.keyVersion ||
+      share.sender.bundleSequence !== senderIdentity.bundleSequence ||
+      share.recipient.userId !== recipientUserId ||
+      share.recipient.signingKeyFingerprint !== recipientIdentity.signingKey.fingerprint ||
+      share.recipient.bundleSequence !== recipientIdentity.bundleSequence ||
+      share.recipient.encryptionKeyFingerprint !== recipientIdentity.encryptionKey.fingerprint ||
+      share.recipient.encryptionKeyVersion !== recipientIdentity.encryptionKey.keyVersion ||
+      share.role !== role
+    ) throw new RecipientKeyVersionMismatchError();
+    const body = Buffer.from(JSON.stringify([
+      "cipherspace.workspace-key-share", share.protocolVersion, share.operationId, share.workspaceId,
+      share.sender.userId, share.sender.signingKeyFingerprint, share.sender.signingKeyVersion,
+      share.sender.bundleSequence, share.recipient.userId, share.recipient.signingKeyFingerprint,
+      share.recipient.bundleSequence, share.recipient.encryptionKeyFingerprint,
+      share.recipient.encryptionKeyVersion, share.role, share.workspaceKey.version,
+      share.workspaceKey.commitment, share.wrapping.algorithm, share.wrapping.labelVersion,
+      share.wrapping.ciphertext
+    ]), "utf8");
+    try {
+      const key = await webcrypto.subtle.importKey(
+        "spki", Buffer.from(senderIdentity.signingKey.publicKey, "base64"),
+        { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
+      );
+      if (!(await webcrypto.subtle.verify(
+        { hash: "SHA-256", name: "ECDSA" }, key,
+        Buffer.from(share.signature.value, "base64"), body
+      ))) throw new Error("Invalid signature");
+    } catch (error) {
+      throw new InvalidWorkspaceKeyShareError("Invalid signed workspace key share", { cause: error });
+    }
   }
 }

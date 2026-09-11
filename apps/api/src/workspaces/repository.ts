@@ -1,8 +1,31 @@
 import type { Database, DatabaseSession } from "../database/database.js";
-import { userIdentityAlgorithm } from "../identities/repository.js";
+import { userIdentityAlgorithm, userSigningAlgorithm } from "../identities/repository.js";
 
 export const workspaceRoles = ["owner", "editor", "viewer"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
+
+export interface SignedWorkspaceKeyShare {
+  operationId: string;
+  protocolVersion: 2;
+  recipient: {
+    bundleSequence: number;
+    encryptionKeyFingerprint: string;
+    encryptionKeyVersion: number;
+    signingKeyFingerprint: string;
+    userId: string;
+  };
+  role: WorkspaceRole;
+  sender: {
+    bundleSequence: number;
+    signingKeyFingerprint: string;
+    signingKeyVersion: number;
+    userId: string;
+  };
+  signature: { algorithm: typeof userSigningAlgorithm; value: string };
+  workspaceId: string;
+  workspaceKey: { commitment: string; version: number };
+  wrapping: { algorithm: typeof userIdentityAlgorithm; ciphertext: string; labelVersion: 2 };
+}
 
 export interface StoredWorkspace {
   createdAt: Date;
@@ -21,12 +44,8 @@ export interface StoredWorkspaceMember {
 }
 
 export interface StoredWorkspaceKeyShare {
-  algorithm: typeof userIdentityAlgorithm;
   createdAt: Date;
-  encryptedWorkspaceKey: string;
-  recipientKeyVersion: number;
-  senderKeyVersion: number;
-  senderUserId: string;
+  signedShare: SignedWorkspaceKeyShare | null;
   userId: string;
   workspaceId: string;
 }
@@ -34,15 +53,11 @@ export interface StoredWorkspaceKeyShare {
 export interface WorkspaceKeyAccess {
   canInitialize: boolean;
   keyShareAvailable: boolean;
+  keyShareProtocolVersion: number | null;
 }
 
 export interface WorkspaceKeyShareInput {
-  algorithm: typeof userIdentityAlgorithm;
-  encryptedWorkspaceKey: string;
-  id: string;
-  recipientKeyVersion: number;
-  senderKeyVersion: number;
-  senderUserId: string;
+  signedShare: SignedWorkspaceKeyShare;
 }
 
 export type AddMemberResult = "added" | "already_member" | "forbidden" | "workspace_not_found";
@@ -117,12 +132,9 @@ interface MemberRow {
 }
 
 interface KeyShareRow {
-  algorithm: typeof userIdentityAlgorithm;
   created_at: Date;
-  encrypted_workspace_key: string;
-  recipient_key_version: number;
-  sender_key_version: number;
-  sender_user_id: string;
+  protocol_version: number;
+  signed_share: SignedWorkspaceKeyShare | null;
   user_id: string;
   workspace_id: string;
 }
@@ -149,12 +161,8 @@ function mapMember(row: MemberRow): StoredWorkspaceMember {
 
 function mapKeyShare(row: KeyShareRow): StoredWorkspaceKeyShare {
   return {
-    algorithm: row.algorithm,
     createdAt: row.created_at,
-    encryptedWorkspaceKey: row.encrypted_workspace_key,
-    recipientKeyVersion: row.recipient_key_version,
-    senderKeyVersion: row.sender_key_version,
-    senderUserId: row.sender_user_id,
+    signedShare: row.protocol_version === 2 ? row.signed_share : null,
     userId: row.user_id,
     workspaceId: row.workspace_id
   };
@@ -327,8 +335,9 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
       await database.query(
         `INSERT INTO workspace_key_shares
            (id, workspace_id, user_id, encrypted_workspace_key, sender_user_id,
-            sender_key_version, recipient_key_version, algorithm)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            sender_key_version, recipient_key_version, algorithm, protocol_version,
+            share_operation_id, signed_share)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 2, $1, $9::jsonb)
          ON CONFLICT (workspace_id, user_id) DO UPDATE SET
            id = EXCLUDED.id,
            encrypted_workspace_key = EXCLUDED.encrypted_workspace_key,
@@ -336,17 +345,21 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
            sender_key_version = EXCLUDED.sender_key_version,
            recipient_key_version = EXCLUDED.recipient_key_version,
            algorithm = EXCLUDED.algorithm,
+           protocol_version = EXCLUDED.protocol_version,
+           share_operation_id = EXCLUDED.share_operation_id,
+           signed_share = EXCLUDED.signed_share,
            created_at = now(),
            revoked_at = NULL`,
         [
-          input.keyShare.id,
+          input.keyShare.signedShare.operationId,
           input.workspaceId,
           input.targetUserId,
-          input.keyShare.encryptedWorkspaceKey,
-          input.keyShare.senderUserId,
-          input.keyShare.senderKeyVersion,
-          input.keyShare.recipientKeyVersion,
-          input.keyShare.algorithm
+          input.keyShare.signedShare.wrapping.ciphertext,
+          input.keyShare.signedShare.sender.userId,
+          input.keyShare.signedShare.sender.signingKeyVersion,
+          input.keyShare.signedShare.recipient.encryptionKeyVersion,
+          input.keyShare.signedShare.wrapping.algorithm,
+          JSON.stringify(input.keyShare.signedShare)
         ]
       );
       return "added";
@@ -370,8 +383,9 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
       await database.query(
         `INSERT INTO workspace_key_shares
            (id, workspace_id, user_id, encrypted_workspace_key, sender_user_id,
-            sender_key_version, recipient_key_version, algorithm, revoked_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+            sender_key_version, recipient_key_version, algorithm, revoked_at,
+            protocol_version, share_operation_id, signed_share)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, 2, $1, $9::jsonb)
          ON CONFLICT (workspace_id, user_id) DO UPDATE SET
            id = EXCLUDED.id,
            encrypted_workspace_key = EXCLUDED.encrypted_workspace_key,
@@ -379,17 +393,21 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
            sender_key_version = EXCLUDED.sender_key_version,
            recipient_key_version = EXCLUDED.recipient_key_version,
            algorithm = EXCLUDED.algorithm,
+           protocol_version = EXCLUDED.protocol_version,
+           share_operation_id = EXCLUDED.share_operation_id,
+           signed_share = EXCLUDED.signed_share,
            created_at = now(),
            revoked_at = NULL`,
         [
-          input.keyShare.id,
+          input.keyShare.signedShare.operationId,
           input.workspaceId,
           input.targetUserId,
-          input.keyShare.encryptedWorkspaceKey,
-          input.keyShare.senderUserId,
-          input.keyShare.senderKeyVersion,
-          input.keyShare.recipientKeyVersion,
-          input.keyShare.algorithm
+          input.keyShare.signedShare.wrapping.ciphertext,
+          input.keyShare.signedShare.sender.userId,
+          input.keyShare.signedShare.sender.signingKeyVersion,
+          input.keyShare.signedShare.recipient.encryptionKeyVersion,
+          input.keyShare.signedShare.wrapping.algorithm,
+          JSON.stringify(input.keyShare.signedShare)
         ]
       );
       return "stored";
@@ -402,9 +420,7 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
   ): Promise<StoredWorkspaceKeyShare | null> {
     const result = await this.database.query<KeyShareRow>(
       `SELECT workspace_key_shares.workspace_id, workspace_key_shares.user_id,
-              workspace_key_shares.encrypted_workspace_key,
-              workspace_key_shares.sender_user_id, workspace_key_shares.sender_key_version,
-              workspace_key_shares.recipient_key_version, workspace_key_shares.algorithm,
+              workspace_key_shares.protocol_version, workspace_key_shares.signed_share,
               workspace_key_shares.created_at
        FROM workspace_members
        JOIN workspace_key_shares
@@ -426,6 +442,7 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
     const result = await this.database.query<{
       can_initialize: boolean;
       key_share_available: boolean;
+      key_share_protocol_version: number | null;
     }>(
       `SELECT
          workspace_members.role = 'owner'
@@ -438,14 +455,21 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
          EXISTS (SELECT 1 FROM workspace_key_shares own_share
                  WHERE own_share.workspace_id = $1
                    AND own_share.user_id = $2
-                   AND own_share.revoked_at IS NULL) AS key_share_available
+                   AND own_share.revoked_at IS NULL) AS key_share_available,
+         (SELECT own_share.protocol_version FROM workspace_key_shares own_share
+          WHERE own_share.workspace_id = $1 AND own_share.user_id = $2
+            AND own_share.revoked_at IS NULL LIMIT 1) AS key_share_protocol_version
        FROM workspace_members
        WHERE workspace_members.workspace_id = $1 AND workspace_members.user_id = $2`,
       [workspaceId, userId]
     );
     const access = result.rows[0];
     return access
-      ? { canInitialize: access.can_initialize, keyShareAvailable: access.key_share_available }
+      ? {
+          canInitialize: access.can_initialize,
+          keyShareAvailable: access.key_share_available,
+          keyShareProtocolVersion: access.key_share_protocol_version
+        }
       : null;
   }
 
@@ -485,6 +509,14 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
          WHERE workspace_id = $1 AND user_id = $2`,
         [input.workspaceId, input.targetUserId, input.role]
       );
+      if (targetRole !== input.role) {
+        await database.query(
+          `UPDATE workspace_key_shares
+           SET revoked_at = now()
+           WHERE workspace_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+          [input.workspaceId, input.targetUserId]
+        );
+      }
       return "updated";
     });
   }

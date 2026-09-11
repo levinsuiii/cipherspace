@@ -2,14 +2,16 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   createUserCryptoIdentity,
+  createSignedWorkspaceKeyShare,
   decryptNoteContent,
   encryptNoteContent,
   exportUserRecoveryKit,
   generateWorkspaceKey,
   importUserRecoveryKit,
   unlockUserCryptoIdentity,
-  unwrapWorkspaceKeyShare,
-  wrapWorkspaceKeyForRecipient,
+  unlockUserSigningIdentity,
+  unwrapVerifiedWorkspaceKeyShare,
+  verifyOwnIdentityBundle,
   type EncryptedUserRecoveryKit,
   type LocalUserCryptoIdentity
 } from "../src/index.js";
@@ -47,6 +49,7 @@ beforeAll(async () => {
 
 describe("encrypted user recovery kits", () => {
   it("exports only encrypted private identity material and public metadata", async () => {
+    if (recoveryKit.recovery_kit_version !== 2) throw new Error("Expected recovery kit v2");
     const serialized = JSON.stringify(recoveryKit);
     const privateBytes = await decryptProtectedUserPrivateKeyBytes(identity, originalPassword, {
       userId
@@ -54,20 +57,15 @@ describe("encrypted user recovery kits", () => {
     try {
       expect(recoveryKit).toMatchObject({
         created_at: "2026-08-24T10:00:00.000Z",
-        encrypted_private_key: {
+        encrypted_private_keys: {
           algorithm: "AES-GCM",
-          format: "PKCS8",
+          format: "CIPHERSPACE-IDENTITY-KEYS-V2",
           iterations: 600000,
           kdf: "PBKDF2",
           kdf_hash: "SHA-256"
         },
-        identity: {
-          algorithm: "RSA-OAEP-3072-SHA256",
-          created_at: identityCreatedAt,
-          key_version: 1,
-          public_key: identity.publicKey
-        },
-        recovery_kit_version: 1,
+        identity_bundle: identity.identityBundle,
+        recovery_kit_version: 2,
         user_id: userId
       });
       expect(serialized).not.toContain(encodeBase64(privateBytes));
@@ -90,7 +88,7 @@ describe("encrypted user recovery kits", () => {
       { userId }
     );
 
-    expect(restored.identityCreatedAt).toBe(identityCreatedAt);
+    expect(restored.identityCreatedAt).toBe(identity.identityBundle!.createdAt);
     expect(restored.identity.publicKey).toBe(identity.publicKey);
     await expect(
       unlockUserCryptoIdentity(restored.identity, restoredPassword, { userId })
@@ -103,10 +101,18 @@ describe("encrypted user recovery kits", () => {
   it("lets the restored identity decrypt an existing workspace key share", async () => {
     const workspaceKey = await generateWorkspaceKey();
     const note = await encryptNoteContent("existing shared note", workspaceKey, sharedNoteContext);
-    const share = await wrapWorkspaceKeyForRecipient(workspaceKey, identity, {
-      recipientKeyVersion: identity.keyVersion,
-      recipientUserId: userId,
-      workspaceId
+    const recipient = await verifyOwnIdentityBundle(identity.identityBundle!, {
+      encryptionPublicKey: identity.publicKey,
+      signingPublicKey: identity.signingIdentity!.publicKey,
+      userId
+    });
+    const share = await createSignedWorkspaceKeyShare({
+      recipient,
+      role: "owner",
+      senderBundle: identity.identityBundle!,
+      senderSigningPrivateKey: await unlockUserSigningIdentity(identity.signingIdentity!, originalPassword, { userId }),
+      workspaceId,
+      workspaceKey
     });
     const restored = await importUserRecoveryKit(
       recoveryKit,
@@ -117,9 +123,11 @@ describe("encrypted user recovery kits", () => {
     const privateKey = await unlockUserCryptoIdentity(restored.identity, restoredPassword, {
       userId
     });
-    const restoredWorkspaceKey = await unwrapWorkspaceKeyShare(share, privateKey, {
-      recipientKeyVersion: share.recipientKeyVersion,
-      recipientUserId: userId,
+    const restoredWorkspaceKey = await unwrapVerifiedWorkspaceKeyShare({
+      recipientBundle: restored.identity.identityBundle!,
+      recipientPrivateKey: privateKey,
+      senderSigningIdentity: restored.identity.identityBundle!.signingKey,
+      share,
       workspaceId
     });
 
@@ -140,6 +148,7 @@ describe("encrypted user recovery kits", () => {
   });
 
   it("rejects malformed recovery kits without returning key material", async () => {
+    if (recoveryKit.recovery_kit_version !== 2) throw new Error("Expected recovery kit v2");
     const malformedKits = [
       null,
       { recovery_kit_version: 1 },
@@ -147,8 +156,8 @@ describe("encrypted user recovery kits", () => {
       { ...recoveryKit, created_at: "not-an-iso-timestamp" },
       {
         ...recoveryKit,
-        encrypted_private_key: {
-          ...recoveryKit.encrypted_private_key,
+        encrypted_private_keys: {
+          ...recoveryKit.encrypted_private_keys,
           ciphertext: "not base64"
         }
       }

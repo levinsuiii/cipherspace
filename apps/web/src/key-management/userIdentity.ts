@@ -1,6 +1,8 @@
 import {
   createUserCryptoIdentity,
+  upgradeUserCryptoIdentity,
   unlockUserCryptoIdentity,
+  verifyIdentityBundle,
   type LocalUserCryptoIdentity
 } from "@cipherspace/crypto";
 
@@ -25,6 +27,7 @@ export async function inspectUserCryptoIdentity(
   let remoteIdentity;
   try {
     remoteIdentity = (await api.cryptoIdentity.get()).identity;
+    await verifyIdentityBundle(remoteIdentity);
   } catch (error) {
     if (!(error instanceof ApiError && error.status === 404)) throw error;
   }
@@ -33,9 +36,9 @@ export async function inspectUserCryptoIdentity(
     return remoteIdentity ? "missing-registered" : "missing-unregistered";
   }
   if (!remoteIdentity) return "local-unregistered";
-  return localIdentity.algorithm === remoteIdentity.algorithm &&
-    localIdentity.keyVersion === remoteIdentity.keyVersion &&
-    localIdentity.publicKey === remoteIdentity.publicKey
+  if (!localIdentity.identityBundle || !localIdentity.signingIdentity) return "local-unregistered";
+  return localIdentity.identityBundle.bundleHash === remoteIdentity.bundleHash &&
+    localIdentity.identityBundle.signingKey.fingerprint === remoteIdentity.signingKey.fingerprint
     ? "ready"
     : "identity-mismatch";
 }
@@ -47,7 +50,25 @@ export async function ensureLocalUserCryptoIdentity(
   const repository = new LocalUserIdentityRepository(localDatabase, user.id);
   let identity = await repository.get();
   if (identity) {
-    await unlockUserCryptoIdentity(identity, accountPassword, { userId: user.id });
+    let previousBundle;
+    if (!identity.identityBundle || !identity.signingIdentity) {
+      try {
+        previousBundle = (await api.cryptoIdentity.get()).identity;
+        await verifyIdentityBundle(previousBundle);
+        if (previousBundle.encryptionKey.publicKey !== identity.publicKey) {
+          throw new Error("Die registrierte Verschlüsselungsidentität passt nicht zum lokalen privaten Schlüssel.");
+        }
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 404)) throw error;
+      }
+    }
+    const upgraded = await upgradeUserCryptoIdentity(
+      identity,
+      accountPassword,
+      { userId: user.id },
+      previousBundle
+    );
+    if (upgraded !== identity) identity = await repository.upgrade(upgraded);
   } else {
     try {
       await api.cryptoIdentity.get();
@@ -60,11 +81,8 @@ export async function ensureLocalUserCryptoIdentity(
     const created = await createUserCryptoIdentity(accountPassword, { userId: user.id });
     identity = await repository.add(created);
   }
-  await api.cryptoIdentity.register({
-    algorithm: identity.algorithm,
-    keyVersion: identity.keyVersion,
-    publicKey: identity.publicKey
-  });
+  if (!identity.identityBundle) throw new Error("Die lokale Identität konnte nicht auf das signierte Protokoll aktualisiert werden.");
+  await api.cryptoIdentity.register(identity.identityBundle);
   return identity;
 }
 

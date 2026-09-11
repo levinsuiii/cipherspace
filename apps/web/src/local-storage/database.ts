@@ -7,12 +7,16 @@ import type {
   LocalProtectedWorkspaceKey,
   LocalSyncMetadata,
   LocalStoredUserCryptoIdentity,
+  LocalIdentityPin,
+  LocalAcceptedKeyShare,
   LocalWorkspace,
   PendingChange
 } from "./types";
 
 export class CipherSpaceLocalDatabase extends Dexie {
+  accepted_key_shares!: EntityTable<LocalAcceptedKeyShare, "key">;
   conflicts!: EntityTable<LocalConflict, "key">;
+  identity_pins!: EntityTable<LocalIdentityPin, "key">;
   local_sync_metadata!: EntityTable<LocalSyncMetadata, "key">;
   note_versions!: EntityTable<LocalNoteVersion, "key">;
   notes!: EntityTable<LocalNote, "key">;
@@ -138,6 +142,41 @@ export class CipherSpaceLocalDatabase extends Dexie {
     this.version(6).stores({
       conflicts:
         "key, id, user_id, workspace_id, note_id, pending_change_id, status, [user_id+workspace_id], [user_id+note_id]",
+      local_sync_metadata: "key, user_id, workspace_id, [user_id+workspace_id]",
+      note_versions:
+        "key, user_id, workspace_id, note_id, id, [user_id+note_id], [user_id+workspace_id]",
+      notes:
+        "key, user_id, workspace_id, id, [user_id+id], [user_id+workspace_id]",
+      pending_changes:
+        "id, user_id, workspace_id, note_id, operation_type, status, [user_id+note_id], [user_id+workspace_id], [user_id+status]",
+      user_crypto_identities: "key, user_id",
+      workspace_keys: "key, user_id, workspace_id, [user_id+workspace_id]",
+      workspaces: "key, user_id, id, [user_id+id]"
+    });
+
+    this.version(7).stores({
+      accepted_key_shares: "key, user_id, workspace_id, operation_id, [user_id+workspace_id]",
+      conflicts:
+        "key, id, user_id, workspace_id, note_id, pending_change_id, status, [user_id+workspace_id], [user_id+note_id]",
+      identity_pins: "key, verifier_user_id, subject_user_id, [verifier_user_id+subject_user_id], status",
+      local_sync_metadata: "key, user_id, workspace_id, [user_id+workspace_id]",
+      note_versions:
+        "key, user_id, workspace_id, note_id, id, [user_id+note_id], [user_id+workspace_id]",
+      notes:
+        "key, user_id, workspace_id, id, [user_id+id], [user_id+workspace_id]",
+      pending_changes:
+        "id, user_id, workspace_id, note_id, operation_type, status, [user_id+note_id], [user_id+workspace_id], [user_id+status]",
+      user_crypto_identities: "key, user_id",
+      workspace_keys: "key, user_id, workspace_id, [user_id+workspace_id]",
+      workspaces: "key, user_id, id, [user_id+id]"
+    });
+
+    this.version(8).stores({
+      accepted_key_shares: "key, user_id, workspace_id, operation_id, [user_id+workspace_id]",
+      conflicts:
+        "key, id, user_id, workspace_id, note_id, pending_change_id, status, [user_id+workspace_id], [user_id+note_id]",
+      identity_pins:
+        "key, verifier_user_id, subject_user_id, [verifier_user_id+subject_user_id], &[verifier_user_id+verified_contact_email], status",
       local_sync_metadata: "key, user_id, workspace_id, [user_id+workspace_id]",
       note_versions:
         "key, user_id, workspace_id, note_id, id, [user_id+note_id], [user_id+workspace_id]",
