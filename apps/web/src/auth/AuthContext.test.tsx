@@ -9,6 +9,7 @@ import { cacheOfflineUser } from "./offlineUserCache";
 const user = {
   createdAt: "2026-08-19T12:00:00.000Z",
   email: "person@example.test",
+  emailVerifiedAt: null,
   id: "00000000-0000-4000-8000-000000000001"
 };
 
@@ -66,5 +67,27 @@ describe("AuthProvider", () => {
     );
 
     expect(await screen.findByText(user.email)).toBeInTheDocument();
+  });
+
+  it("migrates a pre-verification offline user cache to unverified state", async () => {
+    localStorage.setItem(
+      "cipherspace:offline-user",
+      JSON.stringify({ createdAt: user.createdAt, email: user.email, id: user.id })
+    );
+    vi.spyOn(api.auth, "me").mockRejectedValue(new TypeError("Failed to fetch"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <AuthHarness />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText(user.email)).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("cipherspace:offline-user") ?? "{}")).not.toEqual({});
   });
 });

@@ -56,6 +56,12 @@ export function AuthenticatedLayout() {
             </div>
           </header>
           {logoutError ? <div className="global-error" role="alert">{logoutError}</div> : null}
+          {!user.emailVerifiedAt ? (
+            <div className="global-error" role="status">
+              Deine E-Mail-Adresse ist noch nicht bestätigt.{" "}
+              <Link to="/verify-email">E-Mail bestätigen</Link>
+            </div>
+          ) : null}
           <main className="page-container">
             <Outlet />
           </main>

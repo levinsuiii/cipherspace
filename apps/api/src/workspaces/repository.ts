@@ -295,7 +295,9 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
 
   public async findUserByEmail(email: string): Promise<{ email: string; id: string } | null> {
     const result = await this.database.query<{ email: string; id: string }>(
-      "SELECT id, email FROM users WHERE lower(email) = lower($1) LIMIT 1",
+      `SELECT id, email FROM users
+       WHERE normalized_email = lower($1) AND email_verified_at IS NOT NULL
+       LIMIT 1`,
       [email]
     );
     return result.rows[0] ?? null;
@@ -303,7 +305,7 @@ export class PostgresWorkspaceRepository implements WorkspaceRepository {
 
   public async findUserById(userId: string): Promise<{ email: string; id: string } | null> {
     const result = await this.database.query<{ email: string; id: string }>(
-      "SELECT id, email FROM users WHERE id = $1 LIMIT 1",
+      "SELECT id, email FROM users WHERE id = $1 AND email_verified_at IS NOT NULL LIMIT 1",
       [userId]
     );
     return result.rows[0] ?? null;

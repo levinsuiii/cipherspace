@@ -34,6 +34,8 @@ const environmentSchema = z.object({
   CORS_ORIGINS: z.string().optional(),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+  EMAIL_FROM: z.string().min(1).optional(),
+  EMAIL_VERIFICATION_TTL_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
   HOST: z.string().min(1).default("127.0.0.1"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
@@ -50,10 +52,15 @@ const environmentSchema = z.object({
     .min(4_096)
     .max(5 * 1024 * 1024)
     .default(1_500_000),
+  RESEND_API_KEY: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().min(1).optional()
+  ),
   SESSION_COOKIE_SAME_SITE: z.enum(["strict", "lax", "none"]).default("strict"),
   SESSION_SECRET: z.string().min(32).max(512),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
-  TRUST_PROXY: booleanString.default("false")
+  TRUST_PROXY: booleanString.default("false"),
+  WEB_APP_URL: z.string().min(1).optional()
 });
 
 type ParsedEnvironment = z.infer<typeof environmentSchema>;
@@ -130,6 +137,67 @@ function validateSessionSecret(secret: string, nodeEnvironment: AppConfig["NODE_
   }
 }
 
+const emailMailboxSchema = z.string().email().max(254);
+
+function validateEmailFrom(value: string): string {
+  if (value !== value.trim() || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new Error("EMAIL_FROM must be a valid email sender without control characters");
+  }
+
+  if (emailMailboxSchema.safeParse(value).success) {
+    return value;
+  }
+
+  const displayNameMatch = /^([\p{L}\p{N} ._'’-]+) <([^<>]+)>$/u.exec(value);
+  if (
+    !displayNameMatch ||
+    !displayNameMatch[1]?.trim() ||
+    !emailMailboxSchema.safeParse(displayNameMatch[2]).success
+  ) {
+    throw new Error("EMAIL_FROM must be a valid email sender mailbox");
+  }
+
+  return value;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+}
+
+function normalizeWebAppUrl(value: string, nodeEnvironment: AppConfig["NODE_ENV"]): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("WEB_APP_URL must be a valid HTTP(S) URL");
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    value.includes("?") ||
+    value.includes("#") ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    parsed.pathname !== "/"
+  ) {
+    throw new Error(
+      "WEB_APP_URL must be an HTTP(S) origin without credentials, path, query, or fragment"
+    );
+  }
+  if (nodeEnvironment === "production" && parsed.protocol !== "https:") {
+    throw new Error("WEB_APP_URL must use HTTPS in production");
+  }
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+    throw new Error("WEB_APP_URL may use HTTP only for localhost or loopback in non-production");
+  }
+
+  return parsed.origin;
+}
+
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const result = environmentSchema.safeParse(environment);
 
@@ -146,13 +214,27 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     if (result.data.MIGRATIONS_DATABASE_URL) {
       validateDatabaseUrl(result.data.MIGRATIONS_DATABASE_URL);
     }
+    if (result.data.EMAIL_FROM) {
+      validateEmailFrom(result.data.EMAIL_FROM);
+    }
     validateSessionSecret(result.data.SESSION_SECRET, result.data.NODE_ENV);
     if (result.data.SESSION_COOKIE_SAME_SITE === "none" && result.data.NODE_ENV !== "production") {
       throw new Error("SESSION_COOKIE_SAME_SITE=none requires NODE_ENV=production");
     }
+    if (result.data.NODE_ENV === "production") {
+      const missing = (["EMAIL_FROM", "RESEND_API_KEY", "WEB_APP_URL"] as const).filter(
+        (name) => !result.data[name]
+      );
+      if (missing.length > 0) {
+        throw new Error(`Production email verification requires ${missing.join(", ")}`);
+      }
+    }
     return {
       ...result.data,
-      CORS_ORIGINS: parseCorsOrigins(result.data.CORS_ORIGINS, result.data.NODE_ENV)
+      CORS_ORIGINS: parseCorsOrigins(result.data.CORS_ORIGINS, result.data.NODE_ENV),
+      WEB_APP_URL: result.data.WEB_APP_URL
+        ? normalizeWebAppUrl(result.data.WEB_APP_URL, result.data.NODE_ENV)
+        : undefined
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid configuration";

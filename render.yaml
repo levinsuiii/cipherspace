@@ -21,6 +21,12 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: WEB_APP_URL
+        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: SESSION_COOKIE_SAME_SITE

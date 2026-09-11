@@ -248,7 +248,7 @@ Network interception:
 Account attacks:
 
 - Mitigate password disclosure with Argon2id hashing, generic login failures, bounded auth bodies, and IP-based registration/login rate limiting.
-- Residual risk: email verification, password reset, breached-password checks, multi-factor authentication, administrator session revocation, and distributed/shared rate limiting are not implemented. The in-memory limiter resets on process restart and is not shared across API replicas.
+- Email ownership now has explicit, conservative verification and verified-only recipient resolution. Existing users migrate as unverified. The repository includes no production mail provider, so deployments must supply the delivery adapter before enabling registration. Password reset, breached-password checks, multi-factor authentication, administrator session revocation, and distributed/shared rate limiting remain unimplemented. The in-memory limiter resets on process restart and is not shared across API replicas.
 
 Session and request forgery:
 

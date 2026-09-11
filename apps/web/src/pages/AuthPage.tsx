@@ -26,7 +26,11 @@ export function AuthPage({ mode }: AuthPageProps) {
       if (isLogin) {
         await auth.login(credentials);
       } else {
-        await auth.register(credentials);
+        const result = await auth.register(credentials);
+        if (result === "verification_pending") {
+          navigate("/verify-email", { replace: true });
+          return;
+        }
       }
       const from = (location.state as { from?: string } | null)?.from;
       navigate(from?.startsWith("/") ? from : "/workspaces", { replace: true });

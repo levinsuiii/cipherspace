@@ -198,6 +198,9 @@ export class WorkspaceService {
     signedShare: EncryptedWorkspaceKeyInput
   ): Promise<WorkspaceKeyShare> {
     await this.requireOwner(workspaceId, actorUserId);
+    if (targetUserId !== actorUserId && !(await this.repository.findUserById(targetUserId))) {
+      throw new UserNotFoundError();
+    }
     const [senderIdentity, recipientIdentity] = await Promise.all([
       this.identityRepository.findCurrent(actorUserId),
       this.identityRepository.findCurrent(targetUserId)

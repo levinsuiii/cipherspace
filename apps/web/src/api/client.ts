@@ -7,6 +7,7 @@ import type {
   EncryptedNoteDetail,
   EncryptedWorkspaceKeyInput,
   InviteePublicKey,
+  RegistrationResponse,
   SyncPullResponse,
   SyncPushChange,
   SyncPushResponse,
@@ -120,10 +121,17 @@ export const api = {
     logout: () => request<void>("/auth/logout", { method: "POST" }),
     me: () => request<{ user: User }>("/auth/me"),
     register: (credentials: Credentials) =>
-      request<{ user: User }>("/auth/register", {
+      request<RegistrationResponse>("/auth/register", {
         body: JSON.stringify(credentials),
         method: "POST"
-      })
+      }),
+    confirmEmail: (token: string, password: string) =>
+      request<{ user: User }>("/auth/email-verification/confirm", {
+        body: JSON.stringify({ password, token }),
+        method: "POST"
+      }),
+    requestEmailVerification: () =>
+      request<{ message: string }>("/auth/email-verification/request", { method: "POST" })
   },
   cryptoIdentity: {
     get: () => request<{ identity: UserCryptoIdentity }>("/crypto/identity"),

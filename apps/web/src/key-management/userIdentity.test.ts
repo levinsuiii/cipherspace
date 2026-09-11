@@ -11,6 +11,7 @@ import { ensureLocalUserCryptoIdentity, inspectUserCryptoIdentity } from "./user
 const user: User = {
   createdAt: "2026-08-21T10:00:00.000Z",
   email: "recipient@example.com",
+  emailVerifiedAt: null,
   id: "00000000-0000-4000-8000-000000000002"
 };
 

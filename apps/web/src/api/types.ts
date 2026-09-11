@@ -3,8 +3,13 @@ export type WorkspaceRole = "owner" | "editor" | "viewer";
 export interface User {
   createdAt: string;
   email: string;
+  emailVerifiedAt: string | null;
   id: string;
 }
+
+export type RegistrationResponse =
+  | { user: User }
+  | { message: string; verificationPending: true };
 
 export interface Workspace {
   createdAt: string;

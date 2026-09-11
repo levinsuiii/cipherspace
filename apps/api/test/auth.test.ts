@@ -2,6 +2,12 @@ import type { QueryResult } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verifyPassword } from "../src/auth/password.js";
+import {
+  DisabledEmailVerificationDelivery,
+  hashEmailVerificationToken,
+  InMemoryEmailVerificationDelivery,
+  type EmailVerificationRepository
+} from "../src/auth/email-verification.js";
 import type {
   AuthRepository,
   CreateSessionInput,
@@ -18,6 +24,7 @@ const testConfig: AppConfig = {
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   DATABASE_POOL_MAX: 10,
+  EMAIL_VERIFICATION_TTL_MINUTES: 30,
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
@@ -29,7 +36,16 @@ const testConfig: AppConfig = {
   TRUST_PROXY: false
 };
 
-class InMemoryAuthRepository implements AuthRepository {
+interface StoredChallenge {
+  accountId: string;
+  email: string;
+  expiresAt: Date;
+  kind: "account" | "reclaim";
+  passwordHash: string | null;
+}
+
+class InMemoryAuthRepository implements AuthRepository, EmailVerificationRepository {
+  public readonly challenges = new Map<string, StoredChallenge>();
   public readonly sessions = new Map<string, CreateSessionInput>();
   public readonly users = new Map<string, StoredUser>();
 
@@ -42,6 +58,7 @@ class InMemoryAuthRepository implements AuthRepository {
     const user: StoredUser = {
       createdAt: new Date("2026-08-19T12:00:00.000Z"),
       email: input.email,
+      emailVerifiedAt: null,
       id: input.id,
       passwordHash: input.passwordHash
     };
@@ -69,6 +86,97 @@ class InMemoryAuthRepository implements AuthRepository {
   public async deleteSession(tokenHash: string): Promise<void> {
     this.sessions.delete(tokenHash);
   }
+
+  public async replaceAccountEmailVerification(input: {
+    email: string;
+    expiresAt: Date;
+    id: string;
+    tokenHash: string;
+    userId: string;
+  }): Promise<boolean> {
+    const user = [...this.users.values()].find(({ id }) => id === input.userId);
+    if (!user || user.email.toLowerCase() !== input.email || user.emailVerifiedAt) return false;
+    for (const [hash, challenge] of this.challenges) {
+      if (challenge.kind === "account" && challenge.accountId === input.userId) {
+        this.challenges.delete(hash);
+      }
+    }
+    this.challenges.set(input.tokenHash, {
+      accountId: input.userId,
+      email: input.email,
+      expiresAt: input.expiresAt,
+      kind: "account",
+      passwordHash: null
+    });
+    return true;
+  }
+
+  public async replacePendingEmailReclaim(input: {
+    email: string;
+    expiresAt: Date;
+    id: string;
+    passwordHash: string;
+    replacementUserId: string;
+    tokenHash: string;
+  }): Promise<boolean> {
+    const claimed = this.users.get(input.email);
+    if (!claimed || claimed.emailVerifiedAt) return false;
+    for (const [hash, challenge] of this.challenges) {
+      if (challenge.kind === "reclaim" && challenge.email === input.email) {
+        this.challenges.delete(hash);
+      }
+    }
+    this.challenges.set(input.tokenHash, {
+      accountId: input.replacementUserId,
+      email: input.email,
+      expiresAt: input.expiresAt,
+      kind: "reclaim",
+      passwordHash: input.passwordHash
+    });
+    return true;
+  }
+
+  public async findEmailVerificationPasswordHash(tokenHash: string): Promise<string | null> {
+    const challenge = this.challenges.get(tokenHash);
+    if (!challenge || challenge.expiresAt <= new Date()) return null;
+    if (challenge.kind === "reclaim") return challenge.passwordHash;
+    return [...this.users.values()].find(({ id }) => id === challenge.accountId)?.passwordHash ?? null;
+  }
+
+  public async consumeEmailVerification(tokenHash: string, verifiedAt: Date): Promise<StoredUser | null> {
+    const challenge = this.challenges.get(tokenHash);
+    if (!challenge || challenge.expiresAt <= verifiedAt) {
+      this.challenges.delete(tokenHash);
+      return null;
+    }
+    let user: StoredUser | undefined;
+    if (challenge.kind === "account") {
+      const existing = [...this.users.values()].find(({ id }) => id === challenge.accountId);
+      if (!existing || existing.email !== challenge.email || existing.emailVerifiedAt) return null;
+      user = { ...existing, emailVerifiedAt: verifiedAt };
+      this.users.set(challenge.email, user);
+    } else {
+      const existing = this.users.get(challenge.email);
+      if (existing?.emailVerifiedAt) return null;
+      if (existing) {
+        this.users.delete(challenge.email);
+        const reclaimedEmail = `reclaimed-${existing.id}@invalid.example`;
+        this.users.set(reclaimedEmail, { ...existing, email: reclaimedEmail });
+      }
+      user = {
+        createdAt: verifiedAt,
+        email: challenge.email,
+        emailVerifiedAt: verifiedAt,
+        id: challenge.accountId,
+        passwordHash: challenge.passwordHash!
+      };
+      this.users.set(challenge.email, user);
+    }
+    for (const [hash, candidate] of this.challenges) {
+      if (candidate.email === challenge.email) this.challenges.delete(hash);
+    }
+    return user;
+  }
 }
 
 const database: Database = {
@@ -79,9 +187,11 @@ const database: Database = {
 
 const apps: ReturnType<typeof buildApp>[] = [];
 let repository: InMemoryAuthRepository;
+let verificationDelivery: InMemoryEmailVerificationDelivery;
 
 beforeEach(() => {
   repository = new InMemoryAuthRepository();
+  verificationDelivery = new InMemoryEmailVerificationDelivery("test");
 });
 
 afterEach(async () => {
@@ -89,9 +199,15 @@ afterEach(async () => {
 });
 
 function createApp(configOverrides: Partial<AppConfig> = {}) {
+  const config = { ...testConfig, ...configOverrides };
   const app = buildApp({
     authRepository: repository,
-    config: { ...testConfig, ...configOverrides },
+    emailVerificationDelivery:
+      config.NODE_ENV === "production"
+        ? { sendVerification: async (message) => { verificationDelivery.messages.push(message); } }
+        : verificationDelivery,
+    emailVerificationRepository: repository,
+    config,
     database,
     logger: false
   });
@@ -108,7 +224,33 @@ function sessionCookie(setCookieHeader: string | string[] | undefined): string {
   return value.split(";", 1)[0] ?? "";
 }
 
+function deliveredToken(index = verificationDelivery.messages.length - 1): string {
+  const token = verificationDelivery.messages[index]?.token;
+  if (!token) throw new Error("Expected a delivered verification token");
+  return token;
+}
+
 describe("authentication routes", () => {
+  it("cannot enable token-inspecting or disabled delivery in production", () => {
+    expect(() => new InMemoryEmailVerificationDelivery("production")).toThrow(/cannot run in production/);
+    expect(() => buildApp({
+      authRepository: repository,
+      config: { ...testConfig, NODE_ENV: "production" },
+      database,
+      emailVerificationDelivery: verificationDelivery,
+      emailVerificationRepository: repository,
+      logger: false
+    })).toThrow(/production email verification delivery is required/i);
+    expect(() => buildApp({
+      authRepository: repository,
+      config: { ...testConfig, NODE_ENV: "production" },
+      database,
+      emailVerificationDelivery: new DisabledEmailVerificationDelivery(),
+      emailVerificationRepository: repository,
+      logger: false
+    })).toThrow(/production email verification delivery is required/);
+  });
+
   it("registers a user, hashes the password, creates a session, and returns the current user", async () => {
     const app = createApp();
     const password = "correct horse battery staple";
@@ -199,7 +341,7 @@ describe("authentication routes", () => {
     expect(registration.headers["set-cookie"]).toContain("Secure");
   });
 
-  it("rejects duplicate accounts without exposing the existing account", async () => {
+  it("responds generically while starting reclaim only for an unverified duplicate", async () => {
     const app = createApp();
     const payload = { email: "person@example.com", password: "correct horse battery staple" };
     await app.inject({ method: "POST", payload, url: "/api/auth/register" });
@@ -210,13 +352,218 @@ describe("authentication routes", () => {
       url: "/api/auth/register"
     });
 
-    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.statusCode).toBe(202);
     expect(duplicate.json()).toEqual({
-      error: {
-        code: "account_creation_failed",
-        message: "Unable to create an account with those credentials."
-      }
+      message: "If this address can be registered, verification instructions will be sent.",
+      verificationPending: true
     });
+    expect(verificationDelivery.messages).toHaveLength(2);
+  });
+
+  it("verifies a mailbox once and never stores or returns the raw token", async () => {
+    const app = createApp();
+    const password = "correct horse battery staple";
+    const registration = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password },
+      url: "/api/auth/register"
+    });
+    const token = deliveredToken();
+    const storedUser = repository.users.get("victim@example.test")!;
+
+    expect(registration.json().user.emailVerifiedAt).toBeNull();
+    expect(storedUser.emailVerifiedAt).toBeNull();
+    expect(repository.challenges.has(token)).toBe(false);
+    expect(repository.challenges.has(hashEmailVerificationToken(token))).toBe(true);
+    expect(registration.body).not.toContain(token);
+
+    const confirmation = await app.inject({
+      method: "POST",
+      payload: { password, token },
+      url: "/api/auth/email-verification/confirm"
+    });
+    expect(confirmation.statusCode).toBe(200);
+    expect(confirmation.json().user.emailVerifiedAt).toEqual(expect.any(String));
+    expect(confirmation.body).not.toContain(token);
+    expect(repository.users.get("victim@example.test")?.emailVerifiedAt).toBeInstanceOf(Date);
+
+    const replay = await app.inject({
+      method: "POST",
+      payload: { password, token },
+      url: "/api/auth/email-verification/confirm"
+    });
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json()).toEqual({
+      error: { code: "verification_failed", message: "The verification token is invalid or expired." }
+    });
+  });
+
+  it("rejects wrong tokens, wrong passwords, and expired tokens generically", async () => {
+    const app = createApp();
+    const password = "correct horse battery staple";
+    await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password },
+      url: "/api/auth/register"
+    });
+    const token = deliveredToken();
+
+    const wrongToken = await app.inject({
+      method: "POST",
+      payload: { password, token: "A".repeat(43) },
+      url: "/api/auth/email-verification/confirm"
+    });
+    const wrongPassword = await app.inject({
+      method: "POST",
+      payload: { password: "this password is incorrect", token },
+      url: "/api/auth/email-verification/confirm"
+    });
+    repository.challenges.get(hashEmailVerificationToken(token))!.expiresAt = new Date(0);
+    const expired = await app.inject({
+      method: "POST",
+      payload: { password, token },
+      url: "/api/auth/email-verification/confirm"
+    });
+
+    expect(wrongToken.statusCode).toBe(400);
+    expect(wrongPassword.json()).toEqual(wrongToken.json());
+    expect(expired.json()).toEqual(wrongToken.json());
+    expect(repository.users.get("victim@example.test")?.emailVerifiedAt).toBeNull();
+  });
+
+  it("invalidates an older token when a new account verification is requested", async () => {
+    const app = createApp();
+    const password = "correct horse battery staple";
+    const registration = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password },
+      url: "/api/auth/register"
+    });
+    const cookie = sessionCookie(registration.headers["set-cookie"]);
+    const oldToken = deliveredToken();
+    const requested = await app.inject({
+      headers: { cookie },
+      method: "POST",
+      url: "/api/auth/email-verification/request"
+    });
+    const newToken = deliveredToken();
+
+    expect(requested.statusCode).toBe(202);
+    expect(newToken).not.toBe(oldToken);
+    expect(repository.challenges.has(hashEmailVerificationToken(oldToken))).toBe(false);
+    expect((await app.inject({
+      method: "POST",
+      payload: { password, token: oldToken },
+      url: "/api/auth/email-verification/confirm"
+    })).statusCode).toBe(400);
+    expect((await app.inject({
+      method: "POST",
+      payload: { password, token: newToken },
+      url: "/api/auth/email-verification/confirm"
+    })).statusCode).toBe(200);
+  });
+
+  it("throttles repeated verification resend requests", async () => {
+    const app = createApp();
+    const registration = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: "correct horse battery staple" },
+      url: "/api/auth/register"
+    });
+    const cookie = sessionCookie(registration.headers["set-cookie"]);
+
+    const responses = [];
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      responses.push(await app.inject({
+        headers: { cookie },
+        method: "POST",
+        url: "/api/auth/email-verification/request"
+      }));
+    }
+
+    expect(responses.slice(0, 3).every(({ statusCode }) => statusCode === 202)).toBe(true);
+    expect(responses[3]?.statusCode).toBe(429);
+    expect(responses[3]?.json()).toMatchObject({ error: { code: "rate_limit_exceeded" } });
+  });
+
+  it("lets the mailbox owner replace only an unverified pre-claim without taking its resources", async () => {
+    const app = createApp();
+    const attackerPassword = "attacker password is long enough";
+    const ownerPassword = "mailbox owner password is secure";
+    const attackerRegistration = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: attackerPassword },
+      url: "/api/auth/register"
+    });
+    const attackerCookie = sessionCookie(attackerRegistration.headers["set-cookie"]);
+    const attackerId = attackerRegistration.json().user.id;
+    const reclaim = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: ownerPassword },
+      url: "/api/auth/register"
+    });
+    const reclaimToken = deliveredToken();
+
+    expect(reclaim.statusCode).toBe(202);
+    const confirmation = await app.inject({
+      method: "POST",
+      payload: { password: ownerPassword, token: reclaimToken },
+      url: "/api/auth/email-verification/confirm"
+    });
+    expect(confirmation.statusCode).toBe(200);
+    expect(confirmation.json().user).toMatchObject({
+      email: "victim@example.test",
+      emailVerifiedAt: expect.any(String)
+    });
+    expect(confirmation.json().user.id).not.toBe(attackerId);
+    const attackerSession = await app.inject({
+      headers: { cookie: attackerCookie }, method: "GET", url: "/api/auth/me"
+    });
+    expect(attackerSession.statusCode).toBe(200);
+    expect(attackerSession.json().user.id).toBe(attackerId);
+    expect(attackerSession.json().user.email).toMatch(/^reclaimed-/);
+
+    expect((await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: ownerPassword },
+      url: "/api/auth/login"
+    })).statusCode).toBe(200);
+    expect((await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: attackerPassword },
+      url: "/api/auth/login"
+    })).statusCode).toBe(401);
+  });
+
+  it("never starts reclaim for an already verified account", async () => {
+    const app = createApp();
+    const password = "correct horse battery staple";
+    await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password },
+      url: "/api/auth/register"
+    });
+    const token = deliveredToken();
+    await app.inject({
+      method: "POST",
+      payload: { password, token },
+      url: "/api/auth/email-verification/confirm"
+    });
+    const deliveriesBefore = verificationDelivery.messages.length;
+    const duplicate = await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password: "new attacker password is long" },
+      url: "/api/auth/register"
+    });
+
+    expect(duplicate.statusCode).toBe(202);
+    expect(verificationDelivery.messages).toHaveLength(deliveriesBefore);
+    expect(repository.users.get("victim@example.test")?.emailVerifiedAt).toBeInstanceOf(Date);
+    expect((await app.inject({
+      method: "POST",
+      payload: { email: "victim@example.test", password },
+      url: "/api/auth/login"
+    })).statusCode).toBe(200);
   });
 
   it("requires a valid session and invalidates it on logout", async () => {

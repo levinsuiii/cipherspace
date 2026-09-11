@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createRequireAuthentication } from "../auth/middleware.js";
 import {
   AuthService,
-  DuplicateAccountError,
+  InvalidEmailVerificationError,
   InvalidCredentialsError,
   type AuthenticatedSession
 } from "../auth/service.js";
@@ -14,6 +14,12 @@ const credentialsSchema = z
   .object({
     email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()),
     password: z.string().min(12).max(128)
+  })
+  .strict();
+const verificationTokenSchema = z
+  .object({
+    password: z.string().min(12).max(128),
+    token: z.string().regex(/^[A-Za-z0-9_-]{43}$/)
   })
   .strict();
 
@@ -62,6 +68,11 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
     timeWindow: rateLimitWindowMs,
     groupId: "authentication"
   };
+  const verificationResendRateLimit = {
+    groupId: "email-verification-resend",
+    max: Math.min(3, rateLimitMax),
+    timeWindow: Math.max(60_000, rateLimitWindowMs)
+  };
 
   app.post<{ Body: unknown }>(
     "/api/auth/register",
@@ -73,23 +84,55 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
         return validationFailure(reply);
       }
 
+      const session = await authService.register(
+        credentials.data.email,
+        credentials.data.password
+      );
+      if (!session) {
+        return reply.code(202).send({
+          message: "If this address can be registered, verification instructions will be sent.",
+          verificationPending: true
+        });
+      }
+      setSessionCookie(reply, session, sameSite, secureCookies);
+      return reply.code(201).send({ user: session.user });
+    }
+  );
+
+  app.post(
+    "/api/auth/email-verification/request",
+    { config: { rateLimit: verificationResendRateLimit }, preHandler: requireAuthentication },
+    async (request, reply) => {
+      await authService.requestEmailVerification(
+        request.authenticatedUser!.id,
+        request.authenticatedUser!.email
+      );
+      return reply.code(202).send({
+        message: "If verification is available, instructions will be sent."
+      });
+    }
+  );
+
+  app.post<{ Body: unknown }>(
+    "/api/auth/email-verification/confirm",
+    { bodyLimit: 1_024, config: { rateLimit: authRateLimit } },
+    async (request, reply) => {
+      const body = verificationTokenSchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({
+          error: { code: "verification_failed", message: "The verification token is invalid or expired." }
+        });
+      }
       try {
-        const session = await authService.register(
-          credentials.data.email,
-          credentials.data.password
-        );
-        setSessionCookie(reply, session, sameSite, secureCookies);
-        return reply.code(201).send({ user: session.user });
+        return {
+          user: await authService.confirmEmailVerification(body.data.token, body.data.password)
+        };
       } catch (error) {
-        if (error instanceof DuplicateAccountError) {
-          return reply.code(409).send({
-            error: {
-              code: "account_creation_failed",
-              message: "Unable to create an account with those credentials."
-            }
+        if (error instanceof InvalidEmailVerificationError) {
+          return reply.code(400).send({
+            error: { code: "verification_failed", message: "The verification token is invalid or expired." }
           });
         }
-
         throw error;
       }
     }

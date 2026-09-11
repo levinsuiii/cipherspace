@@ -16,7 +16,7 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (credentials: Credentials) => Promise<void>;
   logout: () => Promise<void>;
-  register: (credentials: Credentials) => Promise<void>;
+  register: (credentials: Credentials) => Promise<"authenticated" | "verification_pending">;
   user: User | null;
 }
 
@@ -94,7 +94,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
             predicate: (query) => query.queryKey[0] !== authQueryKey[0]
           });
         },
-        register: (credentials) => establishSession(() => api.auth.register(credentials)),
+        register: async (credentials) => {
+          const result = await api.auth.register(credentials);
+          if (!("user" in result)) return "verification_pending";
+          await establishSession(async () => result);
+          return "authenticated";
+        },
         user: authQuery.data ?? null
       }}
     >

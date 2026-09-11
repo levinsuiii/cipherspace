@@ -12,12 +12,14 @@ import { LandingPage } from "./pages/LandingPage";
 import { HelpPage } from "./pages/HelpPage";
 import { WorkspaceOverviewPage } from "./pages/WorkspaceOverviewPage";
 import { WorkspacesPage } from "./pages/WorkspacesPage";
+import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/hilfe" element={<HelpPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route element={<PublicOnlyRoute />}>
         <Route path="/login" element={<AuthPage mode="login" />} />
         <Route path="/register" element={<AuthPage mode="register" />} />

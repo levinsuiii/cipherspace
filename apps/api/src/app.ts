@@ -6,6 +6,13 @@ import Fastify, { type FastifyInstance } from "fastify";
 
 import { PostgresAuthRepository, type AuthRepository } from "./auth/repository.js";
 import { AuthService } from "./auth/service.js";
+import {
+  DisabledEmailVerificationDelivery,
+  InMemoryEmailVerificationDelivery,
+  ResendEmailVerificationDelivery,
+  type EmailVerificationDelivery,
+  type EmailVerificationRepository
+} from "./auth/email-verification.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { PostgresCommentRepository, type CommentRepository } from "./comments/repository.js";
 import { CommentService } from "./comments/service.js";
@@ -34,6 +41,8 @@ export interface BuildAppOptions {
   database?: Database;
   identityRepository?: IdentityRepository;
   authRepository?: AuthRepository;
+  emailVerificationDelivery?: EmailVerificationDelivery;
+  emailVerificationRepository?: EmailVerificationRepository;
   commentRepository?: CommentRepository;
   noteRepository?: NoteRepository;
   syncRepository?: SyncRepository;
@@ -56,6 +65,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
               paths: [
                 "req.headers.authorization",
                 "req.headers.cookie",
+                "req.body.password",
+                "req.body.token",
                 "res.headers.set-cookie"
               ]
             }
@@ -65,6 +76,35 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     options.database ?? createDatabase(config.DATABASE_URL, config.DATABASE_POOL_MAX);
   const ownsDatabase = options.database === undefined;
   const authRepository = options.authRepository ?? new PostgresAuthRepository(database);
+  const emailVerificationRepository =
+    options.emailVerificationRepository ??
+    (authRepository instanceof PostgresAuthRepository
+      ? authRepository
+      : new PostgresAuthRepository(database));
+  let emailVerificationDelivery = options.emailVerificationDelivery;
+  if (!emailVerificationDelivery) {
+    if (config.NODE_ENV === "production") {
+      if (!config.RESEND_API_KEY || !config.EMAIL_FROM || !config.WEB_APP_URL) {
+        throw new Error(
+          "Production email verification requires EMAIL_FROM, RESEND_API_KEY, and WEB_APP_URL"
+        );
+      }
+      emailVerificationDelivery = new ResendEmailVerificationDelivery(
+        config.RESEND_API_KEY,
+        config.EMAIL_FROM,
+        config.WEB_APP_URL
+      );
+    } else {
+      emailVerificationDelivery = new InMemoryEmailVerificationDelivery(config.NODE_ENV);
+    }
+  }
+  if (
+    config.NODE_ENV === "production" &&
+    (emailVerificationDelivery instanceof InMemoryEmailVerificationDelivery ||
+      emailVerificationDelivery instanceof DisabledEmailVerificationDelivery)
+  ) {
+    throw new Error("A production email verification delivery is required");
+  }
   const identityRepository = options.identityRepository ?? new PostgresIdentityRepository(database);
   const commentRepository = options.commentRepository ?? new PostgresCommentRepository(database);
   const workspaceRepository =
@@ -74,7 +114,10 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const authService = new AuthService(
     authRepository,
     config.SESSION_SECRET,
-    config.SESSION_TTL_HOURS
+    config.SESSION_TTL_HOURS,
+    emailVerificationRepository,
+    emailVerificationDelivery,
+    config.EMAIL_VERIFICATION_TTL_MINUTES
   );
   const identityService = new IdentityService(identityRepository);
   const commentService = new CommentService(commentRepository, workspaceRepository);

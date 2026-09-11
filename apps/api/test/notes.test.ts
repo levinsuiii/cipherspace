@@ -26,6 +26,7 @@ const testConfig: AppConfig = {
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   DATABASE_POOL_MAX: 10,
+  EMAIL_VERIFICATION_TTL_MINUTES: 30,
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",

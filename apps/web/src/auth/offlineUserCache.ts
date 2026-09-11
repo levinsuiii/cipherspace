@@ -32,12 +32,22 @@ export function readOfflineUser(): User | null {
     if (
       typeof value.id !== "string" ||
       typeof value.email !== "string" ||
-      typeof value.createdAt !== "string"
+      typeof value.createdAt !== "string" ||
+      !(
+        value.emailVerifiedAt === undefined ||
+        typeof value.emailVerifiedAt === "string" ||
+        value.emailVerifiedAt === null
+      )
     ) {
       clearOfflineUser();
       return null;
     }
-    return { createdAt: value.createdAt, email: value.email, id: value.id };
+    return {
+      createdAt: value.createdAt,
+      email: value.email,
+      emailVerifiedAt: value.emailVerifiedAt ?? null,
+      id: value.id
+    };
   } catch {
     clearOfflineUser();
     return null;

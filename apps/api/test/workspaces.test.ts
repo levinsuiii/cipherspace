@@ -37,6 +37,7 @@ const testConfig: AppConfig = {
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   DATABASE_POOL_MAX: 10,
+  EMAIL_VERIFICATION_TTL_MINUTES: 30,
   HOST: "127.0.0.1",
   LOG_LEVEL: "silent",
   NODE_ENV: "test",
@@ -60,8 +61,14 @@ class InMemoryAuthRepository implements AuthRepository {
   public readonly sessions = new Map<string, CreateSessionInput>();
   public readonly users = new Map<string, StoredUser>();
 
-  public seedUser(id: string, email: string): string {
-    this.users.set(email, { createdAt: now, email, id, passwordHash: "unused" });
+  public seedUser(id: string, email: string, emailVerifiedAt: Date | null = now): string {
+    this.users.set(email, {
+      createdAt: now,
+      email,
+      emailVerifiedAt,
+      id,
+      passwordHash: "unused"
+    });
     const token = `session-token-${id}`;
     this.sessions.set(hashSessionToken(token, testConfig.SESSION_SECRET), {
       expiresAt: new Date("2099-01-01T00:00:00.000Z"),
@@ -169,12 +176,12 @@ class InMemoryWorkspaceRepository implements WorkspaceRepository {
 
   public async findUserByEmail(email: string): Promise<{ email: string; id: string } | null> {
     const user = this.users.get(email.toLowerCase());
-    return user ? { email: user.email, id: user.id } : null;
+    return user?.emailVerifiedAt ? { email: user.email, id: user.id } : null;
   }
 
   public async findUserById(userId: string): Promise<{ email: string; id: string } | null> {
     const user = [...this.users.values()].find(({ id }) => id === userId);
-    return user ? { email: user.email, id: user.id } : null;
+    return user?.emailVerifiedAt ? { email: user.email, id: user.id } : null;
   }
 
   public async addMember(input: {
@@ -518,6 +525,29 @@ describe("workspace routes", () => {
     });
     expect(outsiderShare.statusCode).toBe(404);
     expect(editorLookup.statusCode).toBe(403);
+  });
+
+  it("does not resolve or add an unverified account as an invite recipient", async () => {
+    const workspace = await createWorkspace();
+    const viewer = authRepository.users.get("viewer@example.com")!;
+    authRepository.users.set(viewer.email, { ...viewer, emailVerifiedAt: null });
+
+    const byEmail = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/invitee-key?email=viewer%40example.com`
+    });
+    const byUserId = await app.inject({
+      headers: { cookie: cookies.owner },
+      method: "GET",
+      url: `/api/workspaces/${workspace.id}/invitee-key?userId=${ids.viewer}`
+    });
+    const addByUserId = await addMember(workspace.id, { role: "viewer", userId: ids.viewer });
+
+    expect(byEmail.statusCode).toBe(404);
+    expect(byUserId.statusCode).toBe(404);
+    expect(addByUserId.statusCode).toBe(404);
+    expect(byEmail.json()).toMatchObject({ error: { code: "user_not_found" } });
   });
 
   it("rejects a signed share whose bound role was changed after signing", async () => {

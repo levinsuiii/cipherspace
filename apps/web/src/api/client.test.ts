@@ -35,6 +35,8 @@ describe("API client", () => {
       api.auth.logout(),
       api.auth.me(),
       api.auth.register({} as never),
+      api.auth.confirmEmail("verification-token", "account password"),
+      api.auth.requestEmailVerification(),
       api.cryptoIdentity.get(),
       api.cryptoIdentity.register({} as never),
       api.comments.create("workspace id", "note id", {} as never),
@@ -63,6 +65,8 @@ describe("API client", () => {
       "/api/auth/logout",
       "/api/auth/me",
       "/api/auth/register",
+      "/api/auth/email-verification/confirm",
+      "/api/auth/email-verification/request",
       "/api/crypto/identity",
       "/api/crypto/identity",
       "/api/workspaces/workspace%20id/notes/note%20id/comments",
@@ -101,6 +105,28 @@ describe("API client", () => {
       "/api/workspaces",
       expect.objectContaining({ credentials: "include" })
     );
+  });
+
+  it("sends the verification secret only in a state-changing POST body", async () => {
+    const token = "fragment-only-verification-secret";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ user: {} }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.auth.confirmEmail(token, "correct horse battery staple");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/email-verification/confirm",
+      expect.objectContaining({
+        body: JSON.stringify({ password: "correct horse battery staple", token }),
+        method: "POST"
+      })
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(token);
   });
 
   it("preserves structured backend errors", async () => {

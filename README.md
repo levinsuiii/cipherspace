@@ -48,6 +48,22 @@ New note and comment content uses AES-256-GCM envelopes created through the Web 
 
 The server stores ciphertext, account password hashes, session-token digests, public identity keys, memberships, version information, timestamps, and other operational metadata. Workspace names, membership relationships, object identifiers, activity timing, and ciphertext sizes remain visible to it.
 
+Email addresses have an explicit verification state. New and existing users may authenticate while
+unverified, but only verified accounts can be resolved as new workspace-share recipients. Verification
+uses a short-lived, single-use random bearer token whose SHA-256 digest is the only token value stored
+by the API; confirmation also requires the password chosen for that account attempt. Existing accounts
+are deliberately migrated as unverified because historical registration did not prove mailbox control.
+An unverified pre-claim can be transactionally displaced after the mailbox owner registers and proves
+the address; the displaced account keeps its ID, password, sessions, cryptographic identity, and
+workspace history under a non-routable replacement address. A verified account is never reclaimable
+through mailbox verification.
+
+Transactional verification email is delivered through Resend in production. `RESEND_API_KEY` is read
+only by the API, while `EMAIL_FROM` and `WEB_APP_URL` configure the sender and verification-link base.
+Tests and local development use in-memory delivery and never contact Resend. Without a custom sender
+domain, `onboarding@resend.dev` may be used for development testing, but Resend's test domain can send
+only to the Resend account owner's address. Production startup rejects missing Resend configuration.
+
 The current design mainly protects content against passive backend or database inspection. It does not fully protect against an active malicious server or hosting path that substitutes public keys or delivers modified client code. Member removal revokes API access but cannot erase keys or data a former member already obtained. Compromised devices, browser extensions, recovery files, or unlocked clients are also outside the protection the application can provide.
 
 The complete trust boundary, assumptions, and known weaknesses are recorded in [Threat Model](docs/THREAT_MODEL.md).
