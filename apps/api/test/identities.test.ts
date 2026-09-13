@@ -21,6 +21,7 @@ import { createIdentityFixture } from "./crypto-fixtures.js";
 const config: AppConfig = {
   AUTH_RATE_LIMIT_MAX: 10,
   AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  BETA_ALLOWED_EMAILS: [],
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   DATABASE_POOL_MAX: 10,
@@ -30,6 +31,7 @@ const config: AppConfig = {
   NODE_ENV: "test",
   PORT: 3000,
   REQUEST_BODY_LIMIT_BYTES: 1_500_000,
+  REGISTRATION_MODE: "open",
   SESSION_COOKIE_SAME_SITE: "strict",
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168,

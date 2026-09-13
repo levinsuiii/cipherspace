@@ -1,12 +1,16 @@
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { LegalLinks } from "../components/LegalLinks";
 
 interface AuthPageProps {
   mode: "login" | "register";
 }
+
+const closedBetaMessage =
+  "CipherSpace befindet sich derzeit in einer geschlossenen Beta. Registrierungen sind nur für eingeladene Tester möglich.";
 
 export function AuthPage({ mode }: AuthPageProps) {
   const auth = useAuth();
@@ -42,7 +46,11 @@ export function AuthPage({ mode }: AuthPageProps) {
       navigate(from?.startsWith("/") ? from : "/workspaces", { replace: true });
     } catch (submissionError) {
       setError(
-        submissionError instanceof Error ? submissionError.message : "Anmeldung fehlgeschlagen."
+        submissionError instanceof ApiError && submissionError.code === "registration_closed"
+          ? closedBetaMessage
+          : submissionError instanceof Error
+            ? submissionError.message
+            : "Anmeldung fehlgeschlagen."
       );
       setIsSubmitting(false);
     }

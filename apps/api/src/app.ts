@@ -117,7 +117,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     config.SESSION_TTL_HOURS,
     emailVerificationRepository,
     emailVerificationDelivery,
-    config.EMAIL_VERIFICATION_TTL_MINUTES
+    config.EMAIL_VERIFICATION_TTL_MINUTES,
+    config.REGISTRATION_MODE,
+    new Set(config.BETA_ALLOWED_EMAILS)
   );
   const identityService = new IdentityService(identityRepository);
   const commentService = new CommentService(commentRepository, workspaceRepository);

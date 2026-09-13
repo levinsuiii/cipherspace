@@ -44,8 +44,12 @@ The browser calls the API directly with credentialed CORS. The API session cooki
 | `REQUEST_BODY_LIMIT_BYTES` | `1500000` | Global request-body ceiling. |
 | `AUTH_RATE_LIMIT_MAX` | `10` | Auth attempts per in-memory window and API process. |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | `60000` | Authentication rate-limit window. |
+| `REGISTRATION_MODE` | `closed` | `closed` admits only allowlisted new registrations; `open` restores public registration. Missing or unknown values fail closed. |
+| `BETA_ALLOWED_EMAILS` | Example: `alice@example.com,bob@example.com` | Backend-only comma-separated allowlist for new registrations in closed mode. Malformed or empty values admit nobody. |
 
-`DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, and `SESSION_SECRET` are secrets. Do not prefix them with `VITE_`, put them in Cloudflare Pages, or commit them. Render's Blueprint generates `SESSION_SECRET` and prompts for the other secret values on first creation.
+`DATABASE_URL`, `MIGRATIONS_DATABASE_URL`, and `SESSION_SECRET` are secrets. `BETA_ALLOWED_EMAILS` is backend-only operational configuration and must likewise never use a `VITE_` prefix or appear in frontend configuration, API responses, health diagnostics, or logs. Do not put these values in Cloudflare Pages or commit real tester addresses. Render's Blueprint generates `SESSION_SECRET` and prompts for the other secret values on first creation.
+
+The registration allowlist controls admission only. It does not prove mailbox ownership: admitted accounts must still complete normal email verification. Existing accounts, sessions, verification challenges, workspaces, and encryption identities are unaffected when an address is removed from `BETA_ALLOWED_EMAILS`. Set `REGISTRATION_MODE=open` to restore the existing public registration behavior while retaining CS-002 verification.
 
 ### Frontend build
 

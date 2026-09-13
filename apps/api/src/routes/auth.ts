@@ -1,18 +1,20 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 
+import { canonicalEmailSchema } from "../auth/email.js";
 import { createRequireAuthentication } from "../auth/middleware.js";
 import {
   AuthService,
-  InvalidEmailVerificationError,
   InvalidCredentialsError,
+  InvalidEmailVerificationError,
+  RegistrationClosedError,
   type AuthenticatedSession
 } from "../auth/service.js";
 import { sessionCookieName } from "../auth/session.js";
 
 const credentialsSchema = z
   .object({
-    email: z.string().trim().email().max(254).transform((email) => email.toLowerCase()),
+    email: canonicalEmailSchema,
     password: z.string().min(12).max(128)
   })
   .strict();
@@ -84,10 +86,20 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
         return validationFailure(reply);
       }
 
-      const session = await authService.register(
-        credentials.data.email,
-        credentials.data.password
-      );
+      let session: AuthenticatedSession | null;
+      try {
+        session = await authService.register(credentials.data.email, credentials.data.password);
+      } catch (error) {
+        if (error instanceof RegistrationClosedError) {
+          return reply.code(403).send({
+            error: {
+              code: "registration_closed",
+              message: "CipherSpace befindet sich derzeit in einer geschlossenen Beta. Registrierungen sind nur für eingeladene Tester möglich."
+            }
+          });
+        }
+        throw error;
+      }
       if (!session) {
         return reply.code(202).send({
           message: "If this address can be registered, verification instructions will be sent.",

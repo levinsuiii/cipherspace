@@ -1,10 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
+import { ensureLocalUserCryptoIdentity } from "../key-management/userIdentity";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { cacheOfflineUser } from "./offlineUserCache";
+
+vi.mock("../key-management/userIdentity", () => ({
+  ensureLocalUserCryptoIdentity: vi.fn()
+}));
 
 const user = {
   createdAt: "2026-08-19T12:00:00.000Z",
@@ -24,7 +30,34 @@ function AuthHarness() {
   );
 }
 
+function RegistrationHarness() {
+  const auth = useAuth();
+  const [status, setStatus] = useState("idle");
+  if (auth.isLoading) return <p>Loading</p>;
+  return (
+    <div>
+      <span>{auth.user?.email ?? "Signed out"}</span>
+      <button
+        onClick={() => {
+          void auth.register({
+            email: "outsider@example.com",
+            password: "correct horse battery staple"
+          }).then(
+            () => setStatus("registered"),
+            () => setStatus("rejected")
+          );
+        }}
+        type="button"
+      >
+        Register
+      </button>
+      <span>{status}</span>
+    </div>
+  );
+}
+
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   localStorage.clear();
 });
@@ -89,5 +122,32 @@ describe("AuthProvider", () => {
 
     expect(await screen.findByText(user.email)).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem("cipherspace:offline-user") ?? "{}")).not.toEqual({});
+  });
+
+  it("creates no local auth or encryption-identity state when closed beta rejects registration", async () => {
+    vi.spyOn(api.auth, "me").mockRejectedValue(
+      new ApiError("Authentication is required.", 401, "unauthorized")
+    );
+    vi.spyOn(api.auth, "register").mockRejectedValue(
+      new ApiError("Registration is closed.", 403, "registration_closed")
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RegistrationHarness />
+        </AuthProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("Signed out")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Register" }));
+    expect(await screen.findByText("rejected")).toBeInTheDocument();
+    expect(ensureLocalUserCryptoIdentity).not.toHaveBeenCalled();
+    expect(localStorage.getItem("cipherspace:offline-user")).toBeNull();
+    expect(queryClient.getQueryData(["auth", "me"])).toBeNull();
   });
 });

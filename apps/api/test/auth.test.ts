@@ -15,12 +15,13 @@ import type {
   StoredUser
 } from "../src/auth/repository.js";
 import { buildApp } from "../src/app.js";
-import type { AppConfig } from "../src/config.js";
+import { loadConfig, type AppConfig } from "../src/config.js";
 import type { Database } from "../src/database/database.js";
 
 const testConfig: AppConfig = {
   AUTH_RATE_LIMIT_MAX: 10,
   AUTH_RATE_LIMIT_WINDOW_MS: 60_000,
+  BETA_ALLOWED_EMAILS: [],
   CORS_ORIGINS: ["http://localhost:5173"],
   DATABASE_URL: "postgres://unused:unused@localhost:5432/unused",
   DATABASE_POOL_MAX: 10,
@@ -30,6 +31,7 @@ const testConfig: AppConfig = {
   NODE_ENV: "test",
   PORT: 3000,
   REQUEST_BODY_LIMIT_BYTES: 1_500_000,
+  REGISTRATION_MODE: "open",
   SESSION_COOKIE_SAME_SITE: "strict",
   SESSION_SECRET: "test-session-secret-at-least-32-characters",
   SESSION_TTL_HOURS: 168,
@@ -215,6 +217,16 @@ function createApp(configOverrides: Partial<AppConfig> = {}) {
   return app;
 }
 
+function closedConfigFromEnvironment(BETA_ALLOWED_EMAILS: string | undefined): AppConfig {
+  return loadConfig({
+    BETA_ALLOWED_EMAILS,
+    DATABASE_URL: testConfig.DATABASE_URL,
+    NODE_ENV: "test",
+    REGISTRATION_MODE: "closed",
+    SESSION_SECRET: testConfig.SESSION_SECRET
+  });
+}
+
 function sessionCookie(setCookieHeader: string | string[] | undefined): string {
   const value = Array.isArray(setCookieHeader) ? setCookieHeader[0] : setCookieHeader;
   if (!value) {
@@ -292,6 +304,216 @@ describe("authentication routes", () => {
     });
     expect(currentUser.statusCode).toBe(200);
     expect(currentUser.json()).toEqual(registration.json());
+  });
+
+  it("admits only allowlisted new accounts in closed mode and keeps CS-002 verification", async () => {
+    const app = createApp({
+      BETA_ALLOWED_EMAILS: ["person@example.com"],
+      REGISTRATION_MODE: "closed"
+    });
+
+    const registration = await app.inject({
+      method: "POST",
+      payload: {
+        email: "  Person@Example.COM ",
+        password: "correct horse battery staple"
+      },
+      url: "/api/auth/register"
+    });
+
+    expect(registration.statusCode).toBe(201);
+    expect(registration.json().user).toMatchObject({
+      email: "person@example.com",
+      emailVerifiedAt: null
+    });
+    expect(repository.users.has("person@example.com")).toBe(true);
+    expect(repository.sessions.size).toBe(1);
+    expect(repository.challenges.size).toBe(1);
+    expect(verificationDelivery.messages).toHaveLength(1);
+  });
+
+  it("rejects non-allowlisted registration before creating any account state", async () => {
+    const app = createApp({
+      BETA_ALLOWED_EMAILS: ["invited@example.com"],
+      REGISTRATION_MODE: "closed"
+    });
+
+    const registration = await app.inject({
+      method: "POST",
+      payload: {
+        email: "outsider@example.com",
+        password: "correct horse battery staple"
+      },
+      url: "/api/auth/register"
+    });
+
+    expect(registration.statusCode).toBe(403);
+    expect(registration.json()).toEqual({
+      error: {
+        code: "registration_closed",
+        message: "CipherSpace befindet sich derzeit in einer geschlossenen Beta. Registrierungen sind nur für eingeladene Tester möglich."
+      }
+    });
+    expect(registration.headers["set-cookie"]).toBeUndefined();
+    expect(repository.users.size).toBe(0);
+    expect(repository.sessions.size).toBe(0);
+    expect(repository.challenges.size).toBe(0);
+    expect(verificationDelivery.messages).toHaveLength(0);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["whitespace-only", " \t\r\n "]
+  ])("permits no new accounts with a closed %s allowlist", async (_label, allowlist) => {
+    const app = createApp(closedConfigFromEnvironment(allowlist));
+    const registration = await app.inject({
+      method: "POST",
+      payload: {
+        email: "person@example.com",
+        password: "correct horse battery staple"
+      },
+      url: "/api/auth/register"
+    });
+
+    expect(registration.statusCode).toBe(403);
+    expect(repository.users.size).toBe(0);
+  });
+
+  it("does not allow body, query, or header fields to override closed registration config", async () => {
+    const app = createApp({ BETA_ALLOWED_EMAILS: [], REGISTRATION_MODE: "closed" });
+    const credentials = {
+      email: "outsider@example.com",
+      password: "correct horse battery staple"
+    };
+    const attempts = [
+      {
+        expectedStatus: 400,
+        label: "body REGISTRATION_MODE",
+        payload: { ...credentials, REGISTRATION_MODE: "open" },
+        url: "/api/auth/register"
+      },
+      {
+        expectedStatus: 403,
+        label: "query REGISTRATION_MODE",
+        payload: credentials,
+        url: "/api/auth/register?REGISTRATION_MODE=open"
+      },
+      {
+        expectedStatus: 403,
+        headers: { REGISTRATION_MODE: "open" },
+        label: "header REGISTRATION_MODE",
+        payload: credentials,
+        url: "/api/auth/register"
+      },
+      {
+        expectedStatus: 400,
+        label: "body BETA_ALLOWED_EMAILS",
+        payload: { ...credentials, BETA_ALLOWED_EMAILS: credentials.email },
+        url: "/api/auth/register"
+      },
+      {
+        expectedStatus: 403,
+        label: "query BETA_ALLOWED_EMAILS",
+        payload: credentials,
+        url: "/api/auth/register?BETA_ALLOWED_EMAILS=outsider%40example.com"
+      },
+      {
+        expectedStatus: 403,
+        headers: { BETA_ALLOWED_EMAILS: credentials.email },
+        label: "header BETA_ALLOWED_EMAILS",
+        payload: credentials,
+        url: "/api/auth/register"
+      }
+    ];
+
+    for (const attempt of attempts) {
+      const response = await app.inject({
+        headers: attempt.headers,
+        method: "POST",
+        payload: attempt.payload,
+        url: attempt.url
+      });
+      expect(response.statusCode, attempt.label).toBe(attempt.expectedStatus);
+    }
+
+    expect(repository.users.size).toBe(0);
+    expect(repository.sessions.size).toBe(0);
+    expect(repository.challenges.size).toBe(0);
+    expect(verificationDelivery.messages).toHaveLength(0);
+  });
+
+  it("keeps existing-user login and reclaim independent of the current allowlist", async () => {
+    const openApp = createApp();
+    const password = "correct horse battery staple";
+    await openApp.inject({
+      method: "POST",
+      payload: { email: "existing@example.com", password },
+      url: "/api/auth/register"
+    });
+
+    const closedApp = createApp({ BETA_ALLOWED_EMAILS: [], REGISTRATION_MODE: "closed" });
+    const login = await closedApp.inject({
+      method: "POST",
+      payload: { email: "EXISTING@example.com", password },
+      url: "/api/auth/login"
+    });
+    const reclaim = await closedApp.inject({
+      method: "POST",
+      payload: { email: "existing@example.com", password: "replacement password is long" },
+      url: "/api/auth/register"
+    });
+
+    expect(login.statusCode).toBe(200);
+    expect(reclaim.statusCode).toBe(202);
+    expect(repository.users.size).toBe(1);
+    expect(verificationDelivery.messages).toHaveLength(2);
+  });
+
+  it("keeps verified-user verification and reclaim behavior after allowlist removal", async () => {
+    const openApp = createApp();
+    const password = "correct horse battery staple";
+    const registration = await openApp.inject({
+      method: "POST",
+      payload: { email: "verified@example.com", password },
+      url: "/api/auth/register"
+    });
+    const originalUserId = registration.json().user.id;
+    const verification = await openApp.inject({
+      method: "POST",
+      payload: { password, token: deliveredToken() },
+      url: "/api/auth/email-verification/confirm"
+    });
+    expect(verification.statusCode).toBe(200);
+
+    const deliveriesBefore = verificationDelivery.messages.length;
+    const closedApp = createApp({ BETA_ALLOWED_EMAILS: [], REGISTRATION_MODE: "closed" });
+    const login = await closedApp.inject({
+      method: "POST",
+      payload: { email: "VERIFIED@example.com", password },
+      url: "/api/auth/login"
+    });
+    const cookie = sessionCookie(login.headers["set-cookie"]);
+    const resend = await closedApp.inject({
+      headers: { cookie },
+      method: "POST",
+      url: "/api/auth/email-verification/request"
+    });
+    const reclaim = await closedApp.inject({
+      method: "POST",
+      payload: { email: "verified@example.com", password: "replacement password is long" },
+      url: "/api/auth/register"
+    });
+
+    expect(login.statusCode).toBe(200);
+    expect(resend.statusCode).toBe(202);
+    expect(reclaim.statusCode).toBe(202);
+    expect(repository.users.get("verified@example.com")).toMatchObject({
+      emailVerifiedAt: expect.any(Date),
+      id: originalUserId
+    });
+    expect(repository.challenges.size).toBe(0);
+    expect(verificationDelivery.messages).toHaveLength(deliveriesBefore);
   });
 
   it("logs in with valid credentials and rejects invalid credentials generically", async () => {

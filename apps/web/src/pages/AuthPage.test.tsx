@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
+import { ApiError } from "../api/client";
 import { AuthPage } from "./AuthPage";
 import { useAuth } from "../auth/AuthContext";
 
@@ -70,5 +71,40 @@ describe("registration legal integration", () => {
         password: "correct horse battery staple"
       })
     );
+  });
+
+  it("shows the generic closed-beta response without exposing an allowlist", async () => {
+    const message = "CipherSpace befindet sich derzeit in einer geschlossenen Beta. Registrierungen sind nur für eingeladene Tester möglich.";
+    const register = vi.fn(async () => {
+      throw new ApiError("Untrusted server wording", 403, "registration_closed");
+    });
+    mockedUseAuth.mockReturnValue({
+      ensureIdentity: vi.fn(),
+      error: null,
+      identityError: null,
+      identityRestored: vi.fn(),
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      register,
+      user: null
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/register"]}>
+        <AuthPage mode="register" />
+      </MemoryRouter>
+    );
+    fireEvent.change(screen.getByLabelText("E-Mail-Adresse"), {
+      target: { value: "outsider@example.com" }
+    });
+    fireEvent.change(screen.getByLabelText(/Passwort/), {
+      target: { value: "correct horse battery staple" }
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Ich akzeptiere/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Account erstellen" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(document.body.textContent).not.toContain("invited@example.com");
   });
 });

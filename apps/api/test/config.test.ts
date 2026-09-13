@@ -12,6 +12,78 @@ const validEnvironment = {
 } satisfies NodeJS.ProcessEnv;
 
 describe("environment configuration", () => {
+  it("parses and deduplicates the closed-beta allowlist with canonical email normalization", () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      BETA_ALLOWED_EMAILS: " Alice@Example.com, alice@example.com , BOB@example.com ",
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "closed"
+    });
+
+    expect(config.REGISTRATION_MODE).toBe("closed");
+    expect(config.BETA_ALLOWED_EMAILS).toEqual(["alice@example.com", "bob@example.com"]);
+  });
+
+  it("fails closed for missing or unknown registration modes", () => {
+    expect(loadConfig({ ...validEnvironment, CORS_ORIGINS: "" }).REGISTRATION_MODE)
+      .toBe("closed");
+    expect(loadConfig({
+      ...validEnvironment,
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "invite-only"
+    }).REGISTRATION_MODE).toBe("closed");
+  });
+
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", " \t\r\n "]
+  ])("fails closed for an %s registration mode", (_label, REGISTRATION_MODE) => {
+    const config = loadConfig({
+      ...validEnvironment,
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE
+    });
+
+    expect(config.REGISTRATION_MODE).toBe("closed");
+  });
+
+  it("fails closed with an empty allowlist when any configured entry is malformed", () => {
+    const malformed = loadConfig({
+      ...validEnvironment,
+      BETA_ALLOWED_EMAILS: "alice@example.com,not-an-email",
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "closed"
+    });
+    const empty = loadConfig({
+      ...validEnvironment,
+      BETA_ALLOWED_EMAILS: "",
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "closed"
+    });
+    const whitespaceOnly = loadConfig({
+      ...validEnvironment,
+      BETA_ALLOWED_EMAILS: " \t\r\n ",
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "closed"
+    });
+
+    expect(malformed.BETA_ALLOWED_EMAILS).toEqual([]);
+    expect(empty.BETA_ALLOWED_EMAILS).toEqual([]);
+    expect(whitespaceOnly.BETA_ALLOWED_EMAILS).toEqual([]);
+  });
+
+  it("supports explicit open registration without consulting the allowlist", () => {
+    const config = loadConfig({
+      ...validEnvironment,
+      BETA_ALLOWED_EMAILS: "not-an-email",
+      CORS_ORIGINS: "",
+      REGISTRATION_MODE: "open"
+    });
+
+    expect(config.REGISTRATION_MODE).toBe("open");
+    expect(config.BETA_ALLOWED_EMAILS).toEqual([]);
+  });
+
   it("fails closed when production Resend configuration is missing", () => {
     expect(() => loadConfig({
       DATABASE_URL: validEnvironment.DATABASE_URL,

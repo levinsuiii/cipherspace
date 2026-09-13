@@ -25,6 +25,7 @@ export interface AuthenticatedSession {
 
 export class InvalidCredentialsError extends Error {}
 export class InvalidEmailVerificationError extends Error {}
+export class RegistrationClosedError extends Error {}
 
 function publicUser(user: StoredUser): AuthenticatedUser {
   return {
@@ -49,10 +50,19 @@ export class AuthService {
     private readonly sessionTtlHours: number,
     private readonly emailVerificationRepository: EmailVerificationRepository,
     private readonly emailVerificationDelivery: EmailVerificationDelivery,
-    private readonly emailVerificationTtlMinutes: number
+    private readonly emailVerificationTtlMinutes: number,
+    private readonly registrationMode: "closed" | "open",
+    private readonly betaAllowedEmails: ReadonlySet<string>
   ) {}
 
   public async register(email: string, password: string): Promise<AuthenticatedSession | null> {
+    if (this.registrationMode === "closed" && !this.betaAllowedEmails.has(email)) {
+      const existingUser = await this.repository.findUserByEmail(email);
+      if (!existingUser) {
+        throw new RegistrationClosedError();
+      }
+    }
+
     const passwordHash = await hashPassword(password);
     const userId = randomUUID();
     const user = await this.repository.createUser({

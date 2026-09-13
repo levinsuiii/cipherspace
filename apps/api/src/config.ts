@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
 
+import { normalizeEmailAddress } from "./auth/email.js";
+
 loadDotenv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 const developmentCorsOrigins = [
@@ -52,6 +54,8 @@ const environmentSchema = z.object({
     .min(4_096)
     .max(5 * 1024 * 1024)
     .default(1_500_000),
+  BETA_ALLOWED_EMAILS: z.string().optional(),
+  REGISTRATION_MODE: z.string().optional(),
   RESEND_API_KEY: z.preprocess(
     (value) => (value === "" ? undefined : value),
     z.string().min(1).optional()
@@ -64,10 +68,38 @@ const environmentSchema = z.object({
 });
 
 type ParsedEnvironment = z.infer<typeof environmentSchema>;
+export type RegistrationMode = "closed" | "open";
 
-export type AppConfig = Omit<ParsedEnvironment, "CORS_ORIGINS"> & {
+export type AppConfig = Omit<
+  ParsedEnvironment,
+  "BETA_ALLOWED_EMAILS" | "CORS_ORIGINS" | "REGISTRATION_MODE"
+> & {
+  BETA_ALLOWED_EMAILS: string[];
   CORS_ORIGINS: string[];
+  REGISTRATION_MODE: RegistrationMode;
 };
+
+function parseRegistrationConfig(
+  modeValue: string | undefined,
+  allowlistValue: string | undefined
+): Pick<AppConfig, "BETA_ALLOWED_EMAILS" | "REGISTRATION_MODE"> {
+  const registrationMode: RegistrationMode =
+    modeValue === "open" ? "open" : "closed";
+
+  if (!allowlistValue?.trim()) {
+    return { BETA_ALLOWED_EMAILS: [], REGISTRATION_MODE: registrationMode };
+  }
+
+  const normalizedEntries = allowlistValue.split(",").map(normalizeEmailAddress);
+  if (normalizedEntries.some((entry) => entry === null)) {
+    return { BETA_ALLOWED_EMAILS: [], REGISTRATION_MODE: registrationMode };
+  }
+
+  return {
+    BETA_ALLOWED_EMAILS: [...new Set(normalizedEntries as string[])],
+    REGISTRATION_MODE: registrationMode
+  };
+}
 
 function validateDatabaseUrl(value: string): void {
   let parsed: URL;
@@ -231,6 +263,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     }
     return {
       ...result.data,
+      ...parseRegistrationConfig(
+        result.data.REGISTRATION_MODE,
+        result.data.BETA_ALLOWED_EMAILS
+      ),
       CORS_ORIGINS: parseCorsOrigins(result.data.CORS_ORIGINS, result.data.NODE_ENV),
       WEB_APP_URL: result.data.WEB_APP_URL
         ? normalizeWebAppUrl(result.data.WEB_APP_URL, result.data.NODE_ENV)
