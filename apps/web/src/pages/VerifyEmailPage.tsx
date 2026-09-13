@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { LegalLinks } from "../components/LegalLinks";
 
 function readVerificationTokenFromFragment(): string {
   const fragment = window.location.hash.startsWith("#")
@@ -127,6 +128,7 @@ export function VerifyEmailPage() {
             </button>
           </form>
         )}
+        <LegalLinks className="legal-links legal-links--auth" />
       </section>
     </main>
   );

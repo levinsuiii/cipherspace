@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { LegalLinks } from "../components/LegalLinks";
 
 export function LandingPage() {
   return (
@@ -97,7 +98,7 @@ export function LandingPage() {
 
       <footer className="public-footer">
         <span>CipherSpace</span>
-        <span>Lokale Notizen · verschlüsselte Synchronisation</span>
+        <LegalLinks />
       </footer>
     </main>
   );

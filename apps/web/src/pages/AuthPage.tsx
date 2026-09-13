@@ -2,6 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { LegalLinks } from "../components/LegalLinks";
 
 interface AuthPageProps {
   mode: "login" | "register";
@@ -15,11 +16,16 @@ export function AuthPage({ mode }: AuthPageProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const isLogin = mode === "login";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (!isLogin && !termsAccepted) {
+      setError("Bitte akzeptiere die Nutzungsbedingungen, um den Account zu erstellen.");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const credentials = { email, password };
@@ -88,6 +94,23 @@ export function AuthPage({ mode }: AuthPageProps) {
             />
             <small>12–128 Zeichen</small>
           </label>
+          {!isLogin ? (
+            <>
+              <label className="checkbox-label">
+                <input
+                  checked={termsAccepted}
+                  onChange={(event) => setTermsAccepted(event.target.checked)}
+                  required
+                  type="checkbox"
+                />
+                <span>Ich akzeptiere die <Link to="/terms">Nutzungsbedingungen</Link>.</span>
+              </label>
+              <p className="privacy-notice">
+                Informationen zur Verarbeitung deiner personenbezogenen Daten findest du in der{" "}
+                <Link to="/privacy">Datenschutzerklärung</Link>.
+              </p>
+            </>
+          ) : null}
           {error ? <div className="form-error" role="alert">{error}</div> : null}
           <button className="button button--primary button--full" disabled={isSubmitting}>
             {isSubmitting ? "Einen Moment…" : isLogin ? "Anmelden" : "Account erstellen"}
@@ -99,6 +122,7 @@ export function AuthPage({ mode }: AuthPageProps) {
             {isLogin ? "Account erstellen" : "Anmelden"}
           </Link>
         </p>
+        <LegalLinks className="legal-links legal-links--auth" />
       </section>
     </main>
   );

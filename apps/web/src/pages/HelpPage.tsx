@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { LegalLinks } from "../components/LegalLinks";
 
 const helpSteps = [
   {
@@ -75,6 +76,10 @@ export function HelpPage() {
         </p>
         <Link className="button button--primary" to="/register">Account erstellen</Link>
       </section>
+      <footer className="public-footer">
+        <span>CipherSpace</span>
+        <LegalLinks />
+      </footer>
     </main>
   );
 }

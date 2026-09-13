@@ -97,6 +97,10 @@ p { color: var(--muted); }
 .form-stack { display: flex; flex-direction: column; gap: 1rem; }
 .form-stack label { display: flex; flex-direction: column; gap: 0.45rem; color: #b9c9c4; font-size: 0.82rem; font-weight: 600; }
 .form-stack label small { color: var(--muted); font-weight: 400; }
+.form-stack .checkbox-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0.7rem; line-height: 1.5; }
+.checkbox-label input { width: 1rem; height: 1rem; margin: 0.2rem 0 0; accent-color: var(--accent); }
+.checkbox-label a, .privacy-notice a { color: var(--accent); }
+.privacy-notice { margin: -0.25rem 0 0; font-size: 0.78rem; line-height: 1.55; }
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -323,6 +327,24 @@ summary { display: flex; min-height: 2.75rem; align-items: center; padding: 0.75
 .project-note p:last-child { margin-bottom: 0; line-height: 1.75; }
 .text-link { display: inline-flex; min-height: 2.75rem; align-items: center; gap: 0.75rem; color: var(--accent); font-size: 0.85rem; text-decoration: none; }
 .public-footer { display: flex; justify-content: space-between; gap: 1rem; padding: 2rem 0; border-top: 1px solid var(--border); color: #6f817a; font-family: "DM Mono", monospace; font-size: 0.65rem; text-transform: uppercase; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 1.2rem; }
+.legal-links a { color: inherit; text-decoration: none; }
+.legal-links a:hover { color: var(--text); }
+.legal-links--auth { padding-top: 1.25rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.72rem; }
+.app-footer { width: min(100% - 3rem, 76rem); margin: auto auto 0; padding: 1.5rem 0 2rem; border-top: 1px solid var(--border); color: #6f817a; font-family: "DM Mono", monospace; font-size: 0.65rem; text-transform: uppercase; }
+
+.legal-header { max-width: 52rem; padding: clamp(4rem, 9vw, 7rem) 0; }
+.legal-header h1 { margin-bottom: 1.25rem; font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 520; letter-spacing: -0.055em; }
+.legal-header > p:last-child { max-width: 46rem; margin-bottom: 0; font-size: 1.05rem; line-height: 1.7; }
+.legal-content { display: grid; max-width: 52rem; gap: 0; padding-bottom: clamp(4rem, 8vw, 7rem); }
+.legal-content section { padding: 2rem 0; border-top: 1px solid var(--border); }
+.legal-content h2 { margin-bottom: 1rem; font-size: 1.2rem; }
+.legal-content p, .legal-content li { line-height: 1.75; }
+.legal-content p:last-child, .legal-content ul:last-child { margin-bottom: 0; }
+.legal-content ul { display: grid; gap: 0.65rem; padding-left: 1.25rem; color: var(--muted); }
+.legal-content strong { color: #bdcbc6; }
+.legal-content address { color: var(--muted); font-style: normal; line-height: 1.8; }
+.legal-content code { overflow-wrap: anywhere; color: var(--accent); }
 
 .help-header { max-width: 48rem; padding: clamp(4rem, 9vw, 7rem) 0; }
 .help-header h1 { margin-bottom: 1.25rem; font-size: clamp(2.8rem, 6vw, 5rem); font-weight: 520; letter-spacing: -0.055em; }
@@ -370,6 +392,10 @@ summary { display: flex; min-height: 2.75rem; align-items: center; padding: 0.75
   .project-note { grid-template-columns: 2.5rem minmax(0, 1fr); }
   .project-note .text-link { grid-column: 2; }
   .public-footer { align-items: flex-start; flex-direction: column; }
+  .legal-header { padding: 3.5rem 0; }
+  .legal-header h1 { font-size: clamp(2.65rem, 13vw, 4rem); }
+  .legal-content section { padding: 1.5rem 0; }
+  .app-footer { width: auto; margin: auto max(0.75rem, env(safe-area-inset-right)) 0 max(0.75rem, env(safe-area-inset-left)); padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
   .topbar {
     min-height: calc(4.25rem + env(safe-area-inset-top));
     grid-template-columns: minmax(0, 1fr) auto;

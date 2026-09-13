@@ -4,6 +4,7 @@ import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { WorkspaceKeyProvider } from "../key-management/WorkspaceKeyContext";
 import { LocalDataProvider } from "../local-storage/LocalDataContext";
+import { LegalLinks } from "../components/LegalLinks";
 
 export function AuthenticatedLayout() {
   const { logout, user } = useAuth();
@@ -65,6 +66,9 @@ export function AuthenticatedLayout() {
           <main className="page-container">
             <Outlet />
           </main>
+          <footer className="app-footer">
+            <LegalLinks />
+          </footer>
         </div>
       </WorkspaceKeyProvider>
     </LocalDataProvider>
